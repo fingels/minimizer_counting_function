@@ -132,30 +132,7 @@ def relation_matrix(string:str,alphabet = { 'A', 'T', 'C', 'G'}):
 
     return mat, minj, antemer_max_prefix_size,postmer_max_size
 
-# def minj_dic(relmat,string:str,alphabet = { 'A', 'T', 'C', 'G'}):
-#
-#     m=len(string)
-#
-#     dic = {}
-#
-#     for i in range(m):
-#
-#         dic[i+1] = { a:float('Inf') for a in alphabet}
-#
-#         for j in range(1,i+1):
-#             if relmat[i][j]=="=":
-#                 dic[i+1][string[i-j+1]]=min(dic[i+1][string[i-j+1]],j+1)
-#                 break
-#
-#         for a in alphabet:
-#             if dic[i+1][a]==float('Inf'):
-#                 if a==string[0]:
-#                     dic[i+1][a]=i+2
-#                 else:
-#                     dic[i+1][a]=0
-#
-#     return dic
-
+    
 def antemer_lower_bound(alpha, minimizer, prefix_max_size, greater_letters_dic, minj, alphabet = {'A', 'T', 'C', 'G'}):
     array = [0]*(alpha+1)
 

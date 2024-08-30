@@ -1,6 +1,6 @@
+use std::collections::HashMap;
 use num::One;
 use num::Zero;
-use rand::seq::index;
 use rand::Rng;
 use num::pow;
 use num::BigUint;
@@ -121,21 +121,39 @@ pub fn find_minimizer(s:&String, m: usize) -> usize {
     return index_min;
 }
 
+pub fn number_of_greater_letters(alphabet:&Vec<char>) -> HashMap<char, usize> {
 
-// def number_of_greater_letters(alphabet = { 'A', 'T', 'C', 'G'}):
-//     dic = {}
-//     for a in alphabet:
-//         dic[a] = len([s for s in alphabet if s>a])
-//     return dic
+    let mut dic: HashMap<char, usize> = HashMap::new();
 
-// def number_of_greater_words(string:str,alphabet = { 'A', 'T', 'C', 'G'}):
-//     # greater or equal
-//     greater_letters_dic = number_of_greater_letters(alphabet)
+    for a in alphabet.iter() {
 
-//     m  = len(string)
-//     sum = 1 # pour le préfixe=m
-//     for i in range(0,m):
-//         ai = string[i]
-//         prod = greater_letters_dic[ai]*len(alphabet)**(m-i-1)
-//         sum+= prod
-//     return sum
+        let mut count: usize = 0;
+
+        for b in alphabet.iter(){
+            if b>a {
+                count +=1;
+            }
+        }
+
+        dic.insert(a.to_ascii_uppercase(), count);
+    }
+
+    return dic;
+}
+
+
+pub fn number_of_greater_words(s:&String,alphabet:&Vec<char>) -> BigUint {
+    // greater or equal
+
+    let greater_letters_dic = number_of_greater_letters(alphabet);
+
+    let m = s.len();
+    let mut sum = BigUint::one(); // pour le préfixe=m
+
+    for (i, c) in s.chars().enumerate() {
+        let prod = greater_letters_dic.get(&c).unwrap() * pow(BigUint::from(alphabet.len()),m-i-1);
+        sum+= prod;
+    }
+
+    return sum;
+}
