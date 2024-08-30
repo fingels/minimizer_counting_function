@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+rand = "0.6"
+num = "0.4"
+substring = "1.4.5"

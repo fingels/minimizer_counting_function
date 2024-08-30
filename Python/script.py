@@ -43,9 +43,10 @@ def generate_k_mers(k,n=1):
     if n==1:
         return int_to_kmer(randint(0,nmax),k)
     else:
-        list =  []
+        l =  []
         for i in range(n):
-            list.append(int_to_kmer(randint(0,nmax),k))
+            l.append(int_to_kmer(randint(0,nmax),k))
+        return l
 
 def find_minimizer(string: str, m: int):
     '''
