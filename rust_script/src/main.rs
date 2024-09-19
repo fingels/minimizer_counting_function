@@ -2,15 +2,17 @@
 
 use substring::Substring;
 mod utils;
+mod lib;
 
 fn main() {
 
     let alphabet = vec!['A','C','G','T'];
-    let n = 5;
-    let k = 5;
-    let m = 3;
+    let n = 1;
+    let k = 11;
+    let m = 6;
 
     let kmers_list = utils::generate_random_k_mers(k,n);
+    // let kmers_list = utils::generate_all_k_mers(k);
 
     // let test= utils::number_of_greater_words(&"ACACAC".to_string(),&alphabet);
 
@@ -25,17 +27,9 @@ fn main() {
         let g = utils::number_of_greater_words(minimizer, &alphabet);
 
         println!("{kmer} : {minimizer}  {g} ");
+
+        lib::autocorrelation_matrix(minimizer, &alphabet);
     }
-
-    println!("=====");
-
-    // let kmers_list = utils::generate_all_k_mers(k);
-
-    // for kmer in kmers_list.iter() {
-
-    //     println!("{kmer}");
-    // }
-
     
 }
 
