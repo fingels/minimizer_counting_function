@@ -6,7 +6,7 @@ from utils import *
 # TODO : preprocess more the postmers
 
 class PreProcess(object):
-    __slots__ = 'autocorrelation_matrix', 'alphabet', 'minimizer', 'length', 'antemer_max_prefix_size', 'postmer_max_size', 'prefix_letters_vectors', 'a_max', 'number_of_greater_letters', 'number_of_greater_words'
+    __slots__ = 'autocorrelation_matrix', 'alphabet', 'minimizer', 'length', 'antemer_max_prefix_size', 'postmer_max_size', 'prefix_letters_vectors', 'a_max', 'number_of_greater_letters', 'number_of_greater_words','postmer_small_values_alphabet_zero', 'postmer_small_values_alphabet_not_zero'
 
     def __init__(self, string, alphabet={'A', 'T', 'C', 'G'}, number_of_greater_letters_dic=None):
 
@@ -23,7 +23,7 @@ class PreProcess(object):
         self.antemer_max_prefix_size: int = self.length
         self.postmer_max_size: int | float = cmath.inf
 
-        self.prefix_letters_vectors: list[dict[str, int]] = [dict()] * (self.length + 1)
+        self.prefix_letters_vectors: list[dict[str, int]] = [dict() for _ in range(self.length + 1)]
         self.a_max: list[str] = [''] * (self.length + 1)
         self.autocorrelation_matrix: list[list[str]] = []
 
@@ -68,6 +68,16 @@ class PreProcess(object):
 
         for i in range(self.length):
             self.a_max[i + 1] = max(self.a_max[i + 1])
+
+        self.postmer_small_values_alphabet_zero : list[int] = [0] * (self.length +1)
+        self.postmer_small_values_alphabet_not_zero : list[list[str]] = [[] for _ in range((self.length +1))]
+
+        for i in range(1,self.length-1):
+            for s in self.alphabet - {self.minimizer[i]}:
+                if self.prefix_letters_vectors[i][s] == 0:
+                    self.postmer_small_values_alphabet_zero[i] += 1
+                else:
+                    self.postmer_small_values_alphabet_not_zero[i].append(s)
 
     def antemer_lower_bound(self, alpha):
         array = [0] * (alpha + 1)
@@ -168,6 +178,9 @@ class PreProcess(object):
             array[j] = self.number_of_greater_letters[self.minimizer[0]] * array[j - 1]
 
             for i in range(1, self.length + 1):
+
+                # TODO : preprocess
+
                 tilde_minj = {}
 
                 a_max = ''
@@ -184,6 +197,8 @@ class PreProcess(object):
                         alphabet_partition_A.append(s)
                     else:
                         alphabet_partition_B.append(s)
+
+                # end TODO
 
                 array[j] += len(alphabet_partition_A) * array[j - (i + 1)]
 
@@ -207,6 +222,9 @@ class PreProcess(object):
             array[j] = self.number_of_greater_letters[self.minimizer[0]] * array[j - 1]
 
             for i in range(1, self.length + 1):
+
+                # TODO : preprocess
+
                 tilde_minj = {}
 
                 a_max = ''
@@ -224,6 +242,8 @@ class PreProcess(object):
                     else:
                         alphabet_partition_B.append(s)
 
+                # end TODO
+
                 array[j] += len(alphabet_partition_A) * array[j - (i + 1)]
 
                 for a in alphabet_partition_B:
@@ -239,6 +259,8 @@ class PreProcess(object):
                                                j - tilde_minj[a]]
 
         return array_prefix
+
+
 
     def postmer(self, beta):
         array_prefix = []
@@ -258,19 +280,9 @@ class PreProcess(object):
                     elif i == j:
                         array_prefix[i][j] = 1
                     else:
+                        array_prefix[i][j] = self.postmer_small_values_alphabet_zero[i] * array[j - (i + 1)]
 
-                        alphabet_zero = 0
-                        alphabet_not_zero = []
-
-                        for s in self.alphabet - {self.minimizer[i]}:
-                            if self.prefix_letters_vectors[i][s] == 0:
-                                alphabet_zero += 1
-                            else:
-                                alphabet_not_zero.append(s)
-
-                        array_prefix[i][j] = alphabet_zero * array[j - (i + 1)]
-
-                        for a in alphabet_not_zero:
+                        for a in self.postmer_small_values_alphabet_not_zero[i]:
                             for new_prefix in range(i - self.prefix_letters_vectors[i][a] + 2,
                                                     j - self.prefix_letters_vectors[i][a] + 2):
                                 array_prefix[i][j] += array_prefix[new_prefix][
@@ -282,11 +294,12 @@ class PreProcess(object):
                     else:
                         array_prefix[i][j] = self.number_of_greater_letters[self.minimizer[i]] * len(self.alphabet) ** (
                                     j - (i + 1))
-
                 else:
                     if i == 0:
                         array_prefix[i][j] = self.number_of_greater_letters[self.minimizer[0]] * array[j - 1]
                     else:
+
+                        # TODO : preprocess
 
                         tilde_minj = {}
 
@@ -306,6 +319,8 @@ class PreProcess(object):
                                 alphabet_partition_B.append(s)
 
                         assert len(alphabet_partition_B) <= 1
+
+                        # end TODO
 
                         array_prefix[i][j] = len(alphabet_partition_A) * array[j - (i + 1)]
                         for a in alphabet_partition_B:
