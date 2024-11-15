@@ -1,4 +1,4 @@
-# minimizer_count
+# Minimizer Counting Function
 
 ## Rust compilation
 
