@@ -1,7 +1,6 @@
 import cmath
 from utils import *
 
-
 # TODO : refactor with integers instead of letters ?
 # TODO : preprocess more the postmers
 

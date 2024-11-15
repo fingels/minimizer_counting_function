@@ -5,8 +5,8 @@ from lib import *
 # import os
 # print('Number of CPUs : {}'.format(os.cpu_count()))
 
-
-# minimizer = 'ACACAC'
+#
+# minimizer = 'ACA'
 # m=len(minimizer)
 # k=10
 #
@@ -20,14 +20,16 @@ from lib import *
 # prefix_max_size = obj.antemer_max_prefix_size
 # postmer_max = obj.postmer_max_size
 #
-# # print(obj.antemer_upper_bound(k))
-# # print(obj.antemer(k))
-# # print(obj.antemer_lower_bound(k))
-# # print('\n')
-# # print(obj.postmer_upper_bound(k+m)[m:])
+# print(postmer_max)
+
+# print(obj.antemer_upper_bound(k))
+# print(obj.antemer(k))
+# print(obj.antemer_lower_bound(k))
+# print('\n')
+# print(obj.postmer_upper_bound(k+m)[m:])
 # print(obj.postmer(k+m)[m:])
-# # print(obj.postmer_lower_bound(k+m)[m:])
-# # print('\n')
+# print(obj.postmer_lower_bound(k+m)[m:])
+# print('\n')
 
 
 #
