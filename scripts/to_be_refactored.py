@@ -2,10 +2,7 @@ import sys
 import pickle
 import time
 from src.lib import *
-# import os
-# print('Number of CPUs : {}'.format(os.cpu_count()))
 
-#
 # minimizer = 'ACA'
 # m=len(minimizer)
 # k=10
@@ -39,49 +36,6 @@ from src.lib import *
 # for k in range(11):
 #     print(k+m, upper_bound(k + m, minimizer, postmer_max, prefix_max_size, greater_letters_dic, minj, a_max), number_of_kmers(k + m, minimizer, postmer_max, prefix_max_size, greater_letters_dic, minj, a_max), lower_bound(k + m, minimizer, postmer_max, prefix_max_size, greater_letters_dic, minj, a_max))
 
-# print('\n')
-# print('ANTEMERS')
-#
-# for alpha in range(6):
-#
-#     candidates = []
-#     for i in range(4**alpha):
-#         kmer = int_to_kmer(i,alpha)
-#         candidates.append(kmer+minimizer)
-#
-#     # print(len(candidates))
-#
-#     acceptables = []
-#
-#     for kmer in candidates:
-#         min_index = find_minimizer(kmer,m)
-#         found_minimizer = kmer[min_index:min_index+m]
-#         if found_minimizer==minimizer and min_index==alpha:
-#             acceptables.append(kmer)
-#
-#     print(alpha, antemer(alpha, minimizer, prefix_max_size),len(acceptables))
-#
-# print('\n')
-# print('POSTMER')
-#
-# for beta in range(m,9):
-#
-#     candidates = []
-#     for i in range(4**(beta-m)):
-#         kmer = int_to_kmer(i,beta-m)
-#         candidates.append(minimizer+kmer)
-#
-#     # print(len(candidates))
-#
-#     acceptables = []
-#
-#     for kmer in candidates:
-#         min_index = find_minimizer(kmer,m)
-#         found_minimizer = kmer[min_index:min_index+m]
-#         if found_minimizer>=minimizer:
-#             acceptables.append(kmer)
-#
-#     print(beta, postmer(beta, minimizer,m),len(acceptables))
 
 
 
@@ -127,7 +81,7 @@ t = time.time()-t
 
 print('\nDone in %s seconds' % t)
 
-with open('./Data/data_k='+str(k)+'_m='+str(m)+'.p', 'wb') as f:
+with open('../Data/data_k='+str(k)+'_m='+str(m)+'.p', 'wb') as f:
     pickle.dump(minimizer_dic, f)
 
 complexity = 4**m * ((2*k-m)*m+m*m)
@@ -178,7 +132,7 @@ win.addItem(data)
 win.addItem(hline)
 
 exporter = pg.exporters.ImageExporter(win.plotItem)
-exporter.export('./Images/data_k='+str(k)+'_m='+str(m)+'.png')
+exporter.export('../Images/data_k='+str(k)+'_m='+str(m)+'.png')
 
 QtGui.QApplication.instance().exec_()
 
