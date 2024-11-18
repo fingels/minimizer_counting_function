@@ -1,10 +1,10 @@
 import cmath
-from utils import *
+from src.utils import *
 
 # TODO : refactor with integers instead of letters ?
 # TODO : preprocess more the postmers
 
-class PreProcess(object):
+class MinimizerCountingFunction(object):
     __slots__ = 'autocorrelation_matrix', 'alphabet', 'minimizer', 'length', 'antemer_max_prefix_size', 'postmer_max_size', 'prefix_letters_vectors', 'a_max', 'number_of_greater_letters', 'number_of_greater_words','postmer_small_values_alphabet_zero', 'postmer_small_values_alphabet_not_zero'
 
     def __init__(self, string, alphabet={'A', 'T', 'C', 'G'}, number_of_greater_letters_dic=None):

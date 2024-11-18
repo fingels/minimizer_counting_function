@@ -1,7 +1,7 @@
 import sys
 import pickle
 import time
-from lib import *
+from src.lib import *
 # import os
 # print('Number of CPUs : {}'.format(os.cpu_count()))
 
@@ -86,7 +86,7 @@ from lib import *
 
 
 k = 31
-m = 8
+m = 7
 
 greater_letters_dic = number_of_greater_letters()
 
@@ -104,7 +104,7 @@ for i in range(4**m):
     sys.stdout.write("\rProgression: %i/%i" % (i+1,4**m))
     minimizer = int_to_kmer(i,m)
 
-    obj = PreProcess(minimizer,number_of_greater_letters_dic=greater_letters_dic)
+    obj = MinimizerCountingFunction(minimizer, number_of_greater_letters_dic=greater_letters_dic)
 
     bound_up[minimizer] = obj.kmer_upper_bound(k)
     bound_low[minimizer] = obj.kmer_lower_bound(k)
@@ -127,7 +127,7 @@ t = time.time()-t
 
 print('\nDone in %s seconds' % t)
 
-with open('../Data/data_k='+str(k)+'_m='+str(m)+'.p', 'wb') as f:
+with open('./Data/data_k='+str(k)+'_m='+str(m)+'.p', 'wb') as f:
     pickle.dump(minimizer_dic, f)
 
 complexity = 4**m * ((2*k-m)*m+m*m)
@@ -137,7 +137,7 @@ print('Estimated constant : %s seconds' % (t/complexity))
 print('Encountered %i tight bounds, representing %.0f%% of all minimizers' % (tight_bound, 100*tight_bound/4**m))
 
 import pyqtgraph as pg
-from pyqtgraph.Qt import QtCore, QtGui
+from pyqtgraph.Qt import QtGui
 import pyqtgraph.exporters
 import math
 
@@ -173,12 +173,12 @@ low_bound = pg.PlotDataItem(x_coordinates,low_bound,pen=pen_red)
 hline = pg.InfiniteLine(pos=(k - m)/normalization_factor, angle=0, pen=pen_red)
 
 win.addItem(data)
-win.addItem(up_bound)
-win.addItem(low_bound)
+# win.addItem(up_bound)
+# win.addItem(low_bound)
 win.addItem(hline)
 
 exporter = pg.exporters.ImageExporter(win.plotItem)
-exporter.export('../Images/data_k='+str(k)+'_m='+str(m)+'.png')
+exporter.export('./Images/data_k='+str(k)+'_m='+str(m)+'.png')
 
 QtGui.QApplication.instance().exec_()
 
