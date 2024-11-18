@@ -1,6 +1,7 @@
 from random import randint
 
 def int_to_bin(num):
+    '''Convert an int to a binary array'''
     binary = []
     while num != 0:
         bit = num % 2
@@ -11,6 +12,7 @@ def int_to_bin(num):
 
 
 def int_to_kmer(num,k):
+    '''Convert an int to the corresponding k-mer'''
     binary = int_to_bin(num)
     while len(binary)<2*k:
         binary.insert(0,0)
@@ -26,7 +28,10 @@ def int_to_kmer(num,k):
     return s
 
 
-def generate_k_mers(k,n=1):
+def generate_random_k_mers(k,n=1):
+    '''
+    Generates n random k-mers
+    '''
     nmax = 2**(2*k)-1
     if n==1:
         return int_to_kmer(randint(0,nmax),k)
