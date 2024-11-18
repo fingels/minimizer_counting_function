@@ -347,6 +347,7 @@ class MinimizerCountingFunction(object):
         return sum
 
     def kmer_upper_bound(self, k):
+        assert k >= self.length, 'k must be larger or equal to the length of the minimizer'
         beta_max = min(self.postmer_max_size - 2, k - self.length)
 
         antemer_array = self.antemer_upper_bound(k - self.length)
@@ -360,6 +361,7 @@ class MinimizerCountingFunction(object):
         return min((beta_max + 1) * 4 ** (k - self.length), sum)
 
     def kmer_lower_bound(self, k):
+        assert k >= self.length, 'k must be larger or equal to the length of the minimizer'
         beta_max = min(self.postmer_max_size - 2, k - self.length)
 
         antemer_array = self.antemer_lower_bound(k - self.length)
