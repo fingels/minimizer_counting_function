@@ -10,6 +10,12 @@ The purpose of this module is to compute $\pi_k(w)$, following the principles de
 
 [REF TO ADD]
 
+### Dependencies
+
+Make sure to have the following python module installed:
+
+`pyqtgraph, nose`
+
 ### Usage of the module
 
 TODO
