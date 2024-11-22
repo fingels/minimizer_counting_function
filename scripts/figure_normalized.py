@@ -5,7 +5,8 @@ import math
 
 #####################################
 
-km_couples = [(31,10),(31,8),(21,8),(21,10)]
+# km_couples = [(31,10),(31,8),(21,8),(21,10)]
+km_couples = [(21,8),(31,8),(61,10)]
 
 #####################################
 
@@ -42,7 +43,7 @@ legend = []
 
 for k,m in plot_dic.keys():
 
-    ax.plot(plot_dic[(k,m)]['x'],plot_dic[(k,m)]['y'],lw=0.25,alpha=0.5)
+    ax.plot(plot_dic[(k,m)]['x'],plot_dic[(k,m)]['y'],lw=0.5,alpha=0.5)
 
     legend.append(r'$k='+str(k)+', m='+str(m)+'$')
 
