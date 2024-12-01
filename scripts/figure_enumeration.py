@@ -5,7 +5,7 @@ from matplotlib import rc
 #####################################
 
 k = 21
-m = 8
+m = 3
 compute_bounds = False
 
 #####################################
