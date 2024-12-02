@@ -1,9 +1,6 @@
-import sys
-import pickle
-import time
 from src.lib import *
 
-minimizer = 'ACACAA'
+minimizer = 'ACACAC'
 k=10
 
 
@@ -12,13 +9,6 @@ greater_letters_dic = number_of_greater_letters()
 
 obj = MinimizerCountingFunction(minimizer,number_of_greater_letters_dic=greater_letters_dic)
 
-relmat = obj.autocorrelation_matrix
-minj = obj.prefix_letters_vectors
-a_max = obj.a_max
-prefix_max_size = obj.antemer_max_prefix_size
-postmer_max = obj.postmer_max_size
-
-print(postmer_max)
 
 print(obj.antemer_upper_bound(k))
 print(obj.antemer(k))

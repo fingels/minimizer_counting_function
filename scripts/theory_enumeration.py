@@ -5,8 +5,8 @@ import pickle
 
 #####################################
 
-k = 21
-m = 3
+k = 101
+m = 8
 compute_bounds = True
 
 #####################################
@@ -18,7 +18,8 @@ minimizer_dic = {}
 bound_up = {}
 bound_low = {}
 
-tight_bound =0
+equal_bounds =0
+tight_bounds = 0
 
 somme = 0
 
@@ -35,9 +36,12 @@ for i in range(4**m):
 
         if bound_up[minimizer]==bound_low[minimizer]:
             N= bound_up[minimizer]
-            tight_bound+=1
+            equal_bounds+=1
         else:
             N = obj.kmer(k)
+
+            if N==bound_up[minimizer] or N==bound_low[minimizer]:
+                tight_bounds+=1
     else:
         N = obj.kmer(k)
 
@@ -54,8 +58,8 @@ t = time.time()-t
 print('\nDone in %s seconds' % t)
 
 if compute_bounds:
-    print('Encountered %i tight bounds, representing %.0f%% of all minimizers' % (
-    tight_bound, 100 * tight_bound / 4 ** m))
+    print('Encountered %i tight bounds, representing %.0f%% of all minimizers; among which they were %i equal bounds, for %.0f%% of all minimizers.' % (
+        equal_bounds+tight_bounds, 100 * (equal_bounds+tight_bounds) / 4 ** m,equal_bounds, 100*equal_bounds/4**m))
 
 with open('../Data/enumeration_k='+str(k)+'_m='+str(m)+'.p', 'wb') as f:
     pickle.dump(minimizer_dic, f)

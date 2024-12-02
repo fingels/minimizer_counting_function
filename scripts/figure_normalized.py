@@ -5,8 +5,11 @@ import math
 
 #####################################
 
-# km_couples = [(31,10),(31,8),(21,8),(21,10)]
-km_couples = [(21,8),(31,8),(61,10)]
+# km_couples = [(21,2),(21,3),(21,4)]
+# km_couples = [(21,3),(31,3),(61,3),(101,3)]
+
+km_couples = [(61,8),(61,10),(101,8),(101,10)]
+# km_couples = [(21,10),(31,10),(61,10),(101,10)]
 
 #####################################
 
@@ -21,7 +24,7 @@ for k,m in km_couples:
 
     normalization_factor = (k-m) + math.log(k-m+1,4)
 
-    x_coordinates = [i / 4 ** m for i in range(len(minimizers_list))]
+    x_coordinates = [i / (4 ** m -1) for i in range(len(minimizers_list))]
     y_coordinates = []
 
     for minimizer in minimizers_list:
