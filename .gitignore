@@ -1,3 +1,4 @@
 /Data/*.p
-/Images/*.pdf
+/Figures_theory/
+/Figures_empirical/
 /.idea/

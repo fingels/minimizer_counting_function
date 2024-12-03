@@ -62,6 +62,6 @@ for line in leg.get_lines():
 
 plt.show()
 fig.tight_layout()
-fig.savefig('../Images/normalized.pdf')
+fig.savefig('../Figures_theory/normalized.pdf')
 
 #####################################

@@ -80,9 +80,9 @@ plt.show()
 fig.tight_layout()
 
 if compute_bounds:
-    fig.savefig('../Images/bounds_k=' + str(k) + '_m=' + str(m) + '.pdf')
+    fig.savefig('../Figures_theory/bounds_k=' + str(k) + '_m=' + str(m) + '.pdf')
 else:
-    fig.savefig('../Images/enumeration_k=' + str(k) + '_m=' + str(m) + '.pdf')
+    fig.savefig('../Figures_theory/enumeration_k=' + str(k) + '_m=' + str(m) + '.pdf')
 
 #####################################t
 
@@ -110,4 +110,4 @@ if compute_bounds:
 
     plt.show()
     fig.tight_layout()
-    fig.savefig('../Images/error_rate_bounds_k=' + str(k) + '_m=' + str(m) + '.pdf')
+    fig.savefig('../Figures_theory/error_rate_bounds_k=' + str(k) + '_m=' + str(m) + '.pdf')

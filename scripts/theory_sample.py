@@ -81,6 +81,6 @@ ax.set_yscale("log",base=4)
 plt.show()
 fig.tight_layout()
 
-fig.savefig('../Images/sample_k=' + str(k) + '_m=' + str(m) +'_N='+str(n_sample)+ '.pdf')
+fig.savefig('../Figures_theory/sample_k=' + str(k) + '_m=' + str(m) +'_N='+str(n_sample)+ '.pdf')
 
 #####################################t

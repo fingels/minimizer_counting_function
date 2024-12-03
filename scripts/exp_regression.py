@@ -61,7 +61,7 @@ plt.xticks(fontsize=fontsize)
 plt.show()
 fig.tight_layout()
 
-fig.savefig('../Images/k_values_examples.pdf')
+fig.savefig('../Figures_theory/k_values_examples.pdf')
 
 #####################################
 
@@ -99,4 +99,4 @@ plt.xticks(fontsize=fontsize)
 
 plt.show()
 fig.tight_layout()
-fig.savefig('../Images/k_values_examples_with_regression.pdf')
+fig.savefig('../Figures_theory/k_values_examples_with_regression.pdf')

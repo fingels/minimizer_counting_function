@@ -79,7 +79,7 @@ ax.yaxis.get_offset_text().set_fontsize(fontsize)
 plt.show()
 fig.tight_layout()
 
-fig.savefig('../Images/regression_slopes_enumeration.pdf')
+fig.savefig('../Figures_theory/regression_slopes_enumeration.pdf')
 
 #####################################
 

@@ -5,15 +5,22 @@ import math
 from src.lib import *
 import sys
 
-# filename = "minimizers_results_chrY_k31.csv"
-# filename = "minimizers_results_ecoli_k21.csv"
-# filename = "minimizers_results_fusion61.csv"
-filename = "minimizers_results_Hg_chr1.csv"
+###########################################################################
 
+# name = "fusion61"
+# name = "chrY_k31"
+# name = "ecoli_k21"
+name = "Hg_chr1"
+
+imbalance_only= False
+
+###########################################################################
+
+filename = 'minimizers_results_'+name+'.csv'
 
 dico = {}
 
-sum = 0
+sum = {}
 
 with open('../Data/'+filename, newline='') as csvfile:
     spamreader = csv.reader(csvfile, delimiter=',', quotechar='|')
@@ -23,45 +30,66 @@ with open('../Data/'+filename, newline='') as csvfile:
         k,m,minimizer,count = row
 
         if count != 'count':
-            dico[minimizer]=int(count)
-            sum+=int(count)
+
+            m= int(m)
+
+            if m not in dico.keys():
+                dico[m]={}
+                sum[m]=0
+
+            dico[m][minimizer]=int(count)
+            sum[m]+=int(count)
+
 
 k = int(k)
-m=int(m)
-logsum = math.log(sum,4)
-
-minimizers_list = sorted(dico.keys())
-
 greater_letters_dic = number_of_greater_letters()
 
-x = list(range(len(minimizers_list)))
+counts = {}
+count_theo = {}
 
-counts = []
-count_theo = []
+freq_empirical = {}
+freq_theo = {}
 
-freq_empirical = []
-freq_theo = []
+x= {}
+minimizers_list={}
 
-#to tune the figures, parse only the beginning minimizers instead of all of them
-# N = 1000
-N = len(minimizers_list)
+for m in dico.keys():
+    logsum = math.log(sum[m],4)
 
-i = 0
+    minimizers_list[m] = sorted(dico[m].keys())
 
-print('Processing '+filename+' with the following values : k=%i, m=%i' % (k,m))
+    x[m] = list(range(len(minimizers_list[m])))
 
-for minimizer in minimizers_list[:N]:
-    sys.stdout.write("\rProgression: %i/%i" % (i + 1, len(minimizers_list)))
+    counts[m] = []
+    count_theo[m] = []
 
-    counts.append(dico[minimizer])
-    freq_empirical.append(math.log(dico[minimizer],4)-logsum)
+    freq_empirical[m] = []
+    freq_theo[m] = []
 
-    obj = MinimizerCountingFunction(minimizer, number_of_greater_letters_dic=greater_letters_dic)
-    th = obj.kmer(k)
-    count_theo.append(th)
-    freq_theo.append(math.log(th,4)-k)
+    #to tune the figures, parse only the beginning minimizers instead of all of them
+    # N = 1000
+    N = len(minimizers_list[m])
 
-    i+=1
+    i = 0
+
+    print('Processing '+filename+' with the following values : k=%i, m=%i' % (k,m))
+
+    for minimizer in minimizers_list[m][:N]:
+        sys.stdout.write("\rProgression: %i/%i" % (i + 1, len(minimizers_list[m])))
+
+        counts[m].append(dico[m][minimizer])
+
+        if not imbalance_only:
+            freq_empirical[m].append(math.log(dico[m][minimizer],4)-logsum)
+
+            obj = MinimizerCountingFunction(minimizer, number_of_greater_letters_dic=greater_letters_dic)
+            th = obj.kmer(k)
+            count_theo[m].append(th)
+            freq_theo[m].append(math.log(th,4)-k)
+
+        i+=1
+
+    print('\n')
 
 ###########################################################################
 
@@ -71,64 +99,79 @@ fontsize = 30
 
 ###########################################################################
 
-fig, ax = plt.subplots(figsize=(12, 8))
+print('Building figures...')
 
-ax.plot(x[:N],counts,lw=0.5)
-ax.plot(x[:N],count_theo,lw=0.5)
+for m in dico.keys():
 
-leg = ax.legend(['Empirical', 'Theory'],fontsize=fontsize,loc='center left')
+    fig, ax = plt.subplots(figsize=(12, 8))
 
-for line in leg.get_lines():
-    line.set_linewidth(4.0)
+    ax.plot(x[m][:N],counts[m],lw=0.5)
 
-n = len(minimizers_list) //4
-x_ticks_positions = [0,n,2*n,3*n,len(minimizers_list)-1]
-x_ticks_labels = [r'\texttt{'+minimizers_list[i][:3]+'}$\cdots$' for i in x_ticks_positions]
-plt.xticks(x_ticks_positions,x_ticks_labels,fontsize=fontsize)
+    if not imbalance_only:
+        ax.plot(x[m][:N],count_theo[m],lw=0.5)
 
-# from matplotlib.ticker import ScalarFormatter
-#
-# class ScalarFormatterForceFormat(ScalarFormatter):
-#     def _set_format(self):  # Override function that finds format to use.
-#         self.format = "%1.1f"  # Give format here
-#
-#
-# yfmt = ScalarFormatterForceFormat()
-# yfmt.set_powerlimits((0,0))
-# ax.yaxis.set_major_formatter(yfmt)
+        leg = ax.legend(['Empirical', 'Theory'],fontsize=fontsize,loc='center left')
 
-ax.yaxis.get_major_locator().set_params(integer=True)
-plt.yticks(fontsize=fontsize)
-ax.yaxis.get_offset_text().set_fontsize(fontsize)
-# ax.ticklabel_format(axis='y',style='sci',scilimits=(0,2))
-ax.set_yscale("log",base=4)
+        for line in leg.get_lines():
+            line.set_linewidth(4.0)
 
-plt.show()
-fig.tight_layout()
-# fig.savefig('../Images/imbalance_'+filename+'.pdf')
-fig.savefig('../Images/theory_vs_'+filename+'.pdf')
+    n = len(minimizers_list[m]) //4
+    x_ticks_positions = [0,n,2*n,3*n,len(minimizers_list[m])-1]
+    x_ticks_labels = [r'\texttt{'+minimizers_list[m][i][:3]+'}$\cdots$' for i in x_ticks_positions]
+    plt.xticks(x_ticks_positions,x_ticks_labels,fontsize=fontsize)
 
-###########################################################################
+    if imbalance_only:
 
-fig, ax = plt.subplots(figsize=(12, 8))
+        from matplotlib.ticker import ScalarFormatter
 
-ax.plot(x[:N],freq_empirical,alpha=0.75,lw=0.75)
-ax.plot(x[:N],freq_theo,alpha=0.5,lw=0.5)
+        class ScalarFormatterForceFormat(ScalarFormatter):
+            def _set_format(self):  # Override function that finds format to use.
+                self.format = "%1.1f"  # Give format here
 
-leg = ax.legend(['Empirical', 'Theory'],fontsize=fontsize,loc='lower left')
+        yfmt = ScalarFormatterForceFormat()
+        yfmt.set_powerlimits((0,0))
+        ax.yaxis.set_major_formatter(yfmt)
+        ax.ticklabel_format(axis='y', style='sci', scilimits=(0, 2))
+    else:
+        ax.set_yscale("log", base=4)
 
-for line in leg.get_lines():
-    line.set_linewidth(4.0)
+    # ax.yaxis.get_major_locator().set_params(integer=True)
+    plt.yticks(fontsize=fontsize)
+    ax.yaxis.get_offset_text().set_fontsize(fontsize)
 
-n = len(minimizers_list) //4
-x_ticks_positions = [0,n,2*n,3*n,len(minimizers_list)-1]
-x_ticks_labels = [r'\texttt{'+minimizers_list[i][:3]+'}$\cdots$' for i in x_ticks_positions]
-plt.xticks(x_ticks_positions,x_ticks_labels,fontsize=fontsize)
+    # plt.show()
+    fig.tight_layout()
 
-ax.yaxis.get_major_locator().set_params(integer=True)
-plt.yticks(fontsize=fontsize)
-ax.yaxis.get_offset_text().set_fontsize(fontsize)
+    if imbalance_only:
+        fig.savefig('../Figures_empirical/imbalance_'+name+'_k='+str(k)+'_m='+str(m)+'.pdf')
+    else:
+        fig.savefig('../Figures_empirical/theory_vs_'+name+'_k='+str(k)+'_m='+str(m)+'.pdf')
 
-plt.show()
-fig.tight_layout()
-fig.savefig('../Images/frequences_'+filename+'.pdf')
+    ###########################################################################
+
+    if not imbalance_only:
+
+        fig, ax = plt.subplots(figsize=(12, 8))
+
+        ax.plot(x[m][:N],freq_empirical[m],alpha=0.75,lw=0.75)
+        ax.plot(x[m][:N],freq_theo[m],alpha=0.5,lw=0.5)
+
+        leg = ax.legend(['Empirical', 'Theory'],fontsize=fontsize,loc='lower left')
+
+        for line in leg.get_lines():
+            line.set_linewidth(4.0)
+
+        n = len(minimizers_list[m]) //4
+        x_ticks_positions = [0,n,2*n,3*n,len(minimizers_list[m])-1]
+        x_ticks_labels = [r'\texttt{'+minimizers_list[m][i][:3]+'}$\cdots$' for i in x_ticks_positions]
+        plt.xticks(x_ticks_positions,x_ticks_labels,fontsize=fontsize)
+
+        ax.yaxis.get_major_locator().set_params(integer=True)
+        plt.yticks(fontsize=fontsize)
+        ax.yaxis.get_offset_text().set_fontsize(fontsize)
+
+        # plt.show()
+        fig.tight_layout()
+        fig.savefig('../Figures_empirical/frequences_'+name+'_k='+str(k)+'_m='+str(m)+'.pdf')
+
+print('... done.')
