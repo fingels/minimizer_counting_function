@@ -28,7 +28,8 @@ count = []
 up = []
 low = []
 
-err_rate = []
+up_err = []
+low_err = []
 
 for minimizer in minimizers_list:
 
@@ -38,7 +39,8 @@ for minimizer in minimizers_list:
         up.append(bound_up[minimizer])
         low.append(bound_low[minimizer])
 
-        err_rate.append(max(bound_up[minimizer]-minimizer_dic[minimizer], minimizer_dic[minimizer]-bound_low[minimizer]) / minimizer_dic[minimizer])
+        up_err.append((bound_up[minimizer]-minimizer_dic[minimizer])/minimizer_dic[minimizer])
+        low_err.append((minimizer_dic[minimizer]-bound_low[minimizer])/minimizer_dic[minimizer])
 
 #####################################
 
@@ -88,7 +90,13 @@ if compute_bounds:
 
     fig, ax = plt.subplots(figsize=(12, 8))
 
-    ax.plot(x,err_rate,lw=0.5)
+    ax.plot(x,up_err,lw=0.5,c='C1')
+    ax.plot(x,low_err,lw=0.5,c='C2')
+
+    leg = ax.legend([r'$\eta^+(w)$', r'$\eta^-(w)$'],fontsize=fontsize,loc='upper right')
+
+    for line in leg.get_lines():
+        line.set_linewidth(4.0)
 
     n = len(minimizers_list) //4
     x_ticks_positions = [0,n,2*n,3*n,len(minimizers_list)-1]
