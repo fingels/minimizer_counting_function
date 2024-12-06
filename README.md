@@ -8,13 +8,16 @@ where $\min(x)$ designates the minimizer of $x$ for the lexicographical order, i
 
 The purpose of this module is to compute $\pi_k(w)$, following the principles defined in the following paper:
 
-[REF TO ADD]
+> _On the number of $k$-mers admitting a given lexicographical minimizer_, F. Ingels, C. Marchet, M. Salson, Univ. Lille.
+> [ref to arxiv]
 
 ### Dependencies
 
-Make sure to have the following python module installed:
+The library itself has no dependencies except on `cmath` which is natively included in Python.
 
-`nose`, `matplotlib`
+To run tests, install `nose`.
+
+To reproduce the figures of the paper and the associated analysis, make sure to have the following Python modules installed: `matplotlib`, `scipy`, `numpy`.
 
 ### Usage of the module
 

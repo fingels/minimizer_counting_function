@@ -1,6 +1,7 @@
 import pickle
 import matplotlib.pyplot as plt
 from matplotlib import rc
+import cmath
 
 #####################################
 
@@ -39,8 +40,16 @@ for minimizer in minimizers_list:
         up.append(bound_up[minimizer])
         low.append(bound_low[minimizer])
 
-        up_err.append((bound_up[minimizer]-minimizer_dic[minimizer])/minimizer_dic[minimizer])
-        low_err.append((minimizer_dic[minimizer]-bound_low[minimizer])/minimizer_dic[minimizer])
+        logtheo = cmath.log(minimizer_dic[minimizer],4)
+        logup = cmath.log(bound_up[minimizer],4)
+        loglow = cmath.log(bound_low[minimizer],4)
+
+        if minimizer[0]!='T':
+            up_err.append((logup-logtheo)/logtheo)
+            low_err.append((logtheo-loglow)/logtheo)
+        else:
+            up_err.append(0)
+            low_err.append(0)
 
 #####################################
 
@@ -93,7 +102,7 @@ if compute_bounds:
     ax.plot(x,up_err,lw=0.5,c='C1')
     ax.plot(x,low_err,lw=0.5,c='C2')
 
-    leg = ax.legend([r'$\eta^+(w)$', r'$\eta^-(w)$'],fontsize=fontsize,loc='upper right')
+    leg = ax.legend([r'$\eta^+(w)$', r'$\eta^-(w)$'],fontsize=fontsize,loc='upper left')
 
     for line in leg.get_lines():
         line.set_linewidth(4.0)
@@ -106,7 +115,7 @@ if compute_bounds:
     ax.yaxis.get_major_locator().set_params(integer=True)
     plt.yticks(fontsize=fontsize)
     ax.yaxis.get_offset_text().set_fontsize(fontsize)
-    ax.set_yscale("log",base=10)
+    # ax.set_yscale("log",base=10)
 
     plt.show()
     fig.tight_layout()

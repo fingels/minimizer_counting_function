@@ -5,8 +5,8 @@ import pickle
 
 #####################################
 
-k = 101
-m = 8
+k = 31
+m = 10
 compute_bounds = True
 
 #####################################
@@ -49,7 +49,7 @@ for i in range(4**m):
 
     minimizer_dic[minimizer]= N
 
-    # assert bound_up[minimizer] >= N and N >= bound_low[minimizer]
+    assert bound_up[minimizer] >= N >= bound_low[minimizer], minimizer
 
 assert somme == 4**k
 
