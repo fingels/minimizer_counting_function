@@ -1,11 +1,14 @@
 import cmath
 from src.utils import *
+from typing import Callable
 
 # TODO : refactor with integers instead of letters ?
-# TODO : preprocess more the postmers
 
 class MinimizerCountingFunction(object):
-    __slots__ = 'autocorrelation_matrix', 'alphabet', 'minimizer', 'length', 'antemer_max_prefix_size', 'postmer_max_size', 'prefix_letters_vectors', 'a_max', 'number_of_greater_letters', 'number_of_greater_words','postmer_small_values_alphabet_zero', 'postmer_small_values_alphabet_not_zero'
+    __slots__ = ('autocorrelation_matrix', 'alphabet', 'minimizer', 'length',
+                 'antemer_max_prefix_size', 'postmer_max_size', 'prefix_letters_vectors', 'a_max', 'number_of_greater_letters',
+                 'number_of_greater_words','postmer_small_values_alphabet_zero', 'postmer_small_values_alphabet_not_zero',
+                 'postmer_prefix_letters_vectors','postmer_a_max')
 
     def __init__(self, string, alphabet={'A', 'T', 'C', 'G'}, number_of_greater_letters_dic=None):
 
@@ -20,10 +23,10 @@ class MinimizerCountingFunction(object):
         else:
             self.number_of_greater_letters = number_of_greater_letters_dic
         self.antemer_max_prefix_size: int = self.length
-        self.postmer_max_size: int | float = cmath.inf
+        self.postmer_max_size: int = cmath.inf
 
         self.prefix_letters_vectors: list[dict[str, int]] = [dict() for _ in range(self.length + 1)]
-        self.a_max: list[str] = [''] * (self.length + 1)
+        self.a_max: list[str] = [' '] * (self.length + 1)
         self.autocorrelation_matrix: list[list[str]] = []
 
         for i in range(self.length):
@@ -68,15 +71,32 @@ class MinimizerCountingFunction(object):
         for i in range(self.length):
             self.a_max[i + 1] = max(self.a_max[i + 1])
 
-        self.postmer_small_values_alphabet_zero : list[int] = [0] * (self.length +1)
-        self.postmer_small_values_alphabet_not_zero : list[list[str]] = [[] for _ in range((self.length +1))]
+        self.postmer_small_values_alphabet_zero : list[set[str]] = [set() for _ in range(self.length+1)]
+        self.postmer_small_values_alphabet_not_zero : list[set[str]] = [set() for _ in range(self.length+1)]
 
-        for i in range(1,self.length-1):
-            for s in self.alphabet - {self.minimizer[i]}:
-                if self.prefix_letters_vectors[i][s] == 0:
-                    self.postmer_small_values_alphabet_zero[i] += 1
+        self.postmer_prefix_letters_vectors: list[dict[str, Callable[[int],int]]] = [dict() for _ in range(self.length + 1)]
+        self.postmer_a_max: list[Callable[[int],str]] = [' '] * (self.length + 1)
+
+        for i in range(1,self.length+1):
+            a_max_dic = {0: ' '}
+            for a in self.alphabet:
+                if self.prefix_letters_vectors[i][a]==0:
+                    self.postmer_small_values_alphabet_zero[i].add(a)
+                    self.postmer_prefix_letters_vectors[i][a] = (lambda x:0)
                 else:
-                    self.postmer_small_values_alphabet_not_zero[i].append(s)
+                    self.postmer_small_values_alphabet_not_zero[i].add(a)
+                    self.postmer_prefix_letters_vectors[i][a] = (lambda x, t=self.prefix_letters_vectors[i][a], m =self.length: t * (x >= m + t - 1))
+                    a_max_dic[self.length + self.prefix_letters_vectors[i][a]-1] = a
+
+            self.postmer_small_values_alphabet_zero[i].discard(self.minimizer[i])
+            self.postmer_small_values_alphabet_not_zero[i].discard(self.minimizer[i])
+
+            beta_values = sorted(a_max_dic.keys())
+            intervals = []
+            for j in range(len(beta_values)):
+                intervals.append(max([a_max_dic[b] for b in beta_values[:j+1]]))
+
+            self.postmer_a_max[i]= (lambda x,inter=tuple(intervals), bval = tuple(beta_values): ''.join([inter[j] * (bval[j] <= x < bval[j+1]) for j in range(len(bval)-1)])+ inter[-1] * (x >= bval[-1]))
 
     def antemer_lower_bound(self, alpha):
         array = [0] * (alpha + 1)
@@ -178,31 +198,11 @@ class MinimizerCountingFunction(object):
 
             for i in range(1, self.length + 1):
 
-                # TODO : preprocess
+                a = self.postmer_a_max[i](j)
 
-                tilde_minj = {}
-
-                a_max = ''
-                for a in self.alphabet:
-                    tilde_minj[a] = self.prefix_letters_vectors[i][a] * (
-                                j >= self.length + self.prefix_letters_vectors[i][a] - 1)
-                    if tilde_minj[a] != 0:
-                        a_max = max(a_max, a)
-
-                alphabet_partition_A = []
-                alphabet_partition_B = []
-                for s in [a for a in self.alphabet if a > self.minimizer[i] and a >= a_max]:
-                    if tilde_minj[s] == 0:
-                        alphabet_partition_A.append(s)
-                    else:
-                        alphabet_partition_B.append(s)
-
-                # end TODO
-
-                array[j] += len(alphabet_partition_A) * array[j - (i + 1)]
-
+                array[j] +=  min(self.number_of_greater_letters[self.minimizer[i]], self.number_of_greater_letters[a]) * array[j - (i + 1)]
                 if i == self.length:
-                    array_prefix[j] += len(alphabet_partition_A) * array[j - (self.length + 1)]
+                    array_prefix[j] += min(self.number_of_greater_letters[self.minimizer[i]], self.number_of_greater_letters[a]) * array[j - (self.length + 1)]
 
         return array_prefix
 
@@ -222,44 +222,21 @@ class MinimizerCountingFunction(object):
 
             for i in range(1, self.length + 1):
 
-                # TODO : preprocess
+                a = self.postmer_a_max[i](j)
 
-                tilde_minj = {}
+                array[j] += min(self.number_of_greater_letters[self.minimizer[i]],
+                                             self.number_of_greater_letters[a]) * array[j - (i + 1)]
 
-                a_max = ''
-                for a in self.alphabet:
-                    tilde_minj[a] = self.prefix_letters_vectors[i][a] * (
-                                j >= self.length + self.prefix_letters_vectors[i][a] - 1)
-                    if tilde_minj[a] != 0:
-                        a_max = max(a_max, a)
-
-                alphabet_partition_A = []
-                alphabet_partition_B = []
-                for s in [a for a in self.alphabet if a > self.minimizer[i] and a >= a_max]:
-                    if tilde_minj[s] == 0:
-                        alphabet_partition_A.append(s)
-                    else:
-                        alphabet_partition_B.append(s)
-
-                # end TODO
-
-                array[j] += len(alphabet_partition_A) * array[j - (i + 1)]
-
-                for a in alphabet_partition_B:
-                    array[j] += array[j - tilde_minj[a] + 1] - self.number_of_greater_letters[self.minimizer[0]] * \
-                                array[
-                                    j - tilde_minj[a]]
+                if a > self.minimizer[i]:
+                    array[j] += array[j - self.postmer_prefix_letters_vectors[i][a](j) + 1] - self.number_of_greater_letters[self.minimizer[0]] * array[j - self.postmer_prefix_letters_vectors[i][a](j)]
 
                 if i == self.length:
-                    array_prefix[j] += len(alphabet_partition_A) * array[j - (self.length + 1)]
-                    for a in alphabet_partition_B:
-                        array_prefix[j] += array[j - tilde_minj[a] + 1] - self.number_of_greater_letters[
-                            self.minimizer[0]] * array[
-                                               j - tilde_minj[a]]
+                    array_prefix[j] += min(self.number_of_greater_letters[self.minimizer[i]],
+                                             self.number_of_greater_letters[self.postmer_a_max[i](j)]) * array[j - (self.length + 1)]
+                    if a > self.minimizer[i]:
+                        array_prefix[j] += array[j - self.postmer_prefix_letters_vectors[i][a](j) + 1] - self.number_of_greater_letters[self.minimizer[0]] * array[j - self.postmer_prefix_letters_vectors[i][a](j)]
 
         return array_prefix
-
-
 
     def postmer(self, beta):
         array_prefix = []
@@ -279,7 +256,7 @@ class MinimizerCountingFunction(object):
                     elif i == j:
                         array_prefix[i][j] = 1
                     else:
-                        array_prefix[i][j] = self.postmer_small_values_alphabet_zero[i] * array[j - (i + 1)]
+                        array_prefix[i][j] = len(self.postmer_small_values_alphabet_zero[i]) * array[j - (i + 1)]
 
                         for a in self.postmer_small_values_alphabet_not_zero[i]:
                             for new_prefix in range(i - self.prefix_letters_vectors[i][a] + 2,
@@ -298,33 +275,14 @@ class MinimizerCountingFunction(object):
                         array_prefix[i][j] = self.number_of_greater_letters[self.minimizer[0]] * array[j - 1]
                     else:
 
-                        # TODO : preprocess
+                        a = self.postmer_a_max[i](j)
 
-                        tilde_minj = {}
+                        array_prefix[i][j] = min(self.number_of_greater_letters[self.minimizer[i]],
+                            self.number_of_greater_letters[a]) * array[j - (i + 1)]
 
-                        a_max = ''
-                        for a in self.alphabet:
-                            tilde_minj[a] = self.prefix_letters_vectors[i][a] * (
-                                        j >= self.length + self.prefix_letters_vectors[i][a] - 1)
-                            if tilde_minj[a] != 0:
-                                a_max = max(a_max, a)
-
-                        alphabet_partition_A = []
-                        alphabet_partition_B = []
-                        for s in [a for a in self.alphabet if a > self.minimizer[i] and a >= a_max]:
-                            if tilde_minj[s] == 0:
-                                alphabet_partition_A.append(s)
-                            else:
-                                alphabet_partition_B.append(s)
-
-                        assert len(alphabet_partition_B) <= 1
-
-                        # end TODO
-
-                        array_prefix[i][j] = len(alphabet_partition_A) * array[j - (i + 1)]
-                        for a in alphabet_partition_B:
-                            for new_prefix in range(i - tilde_minj[a] + 2, self.length + 1):
-                                array_prefix[i][j] += array_prefix[new_prefix][j - tilde_minj[a] + 1]
+                        if a > self.minimizer[i]:
+                            for new_prefix in range(i-self.postmer_prefix_letters_vectors[i][a](j)+2,self.length+1):
+                                array_prefix[i][j] += array_prefix[new_prefix][j - self.postmer_prefix_letters_vectors[i][a](j) +1]
 
             array[j] = sum([array_prefix[l][j] for l in range(self.length + 1)])
 

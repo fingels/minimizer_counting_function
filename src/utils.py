@@ -59,14 +59,15 @@ def find_minimizer(string: str, m: int):
     return index_min
 
 
-def number_of_greater_letters(alphabet = { 'A', 'T', 'C', 'G'}):
+def number_of_greater_letters(alphabet = {'A', 'T', 'C', 'G'}):
     dic = {}
     for a in alphabet:
         dic[a] = len([s for s in alphabet if s>a])
+    dic[' ']=len(alphabet)
     return dic
 
 
-def number_of_greater_words(string:str,alphabet = { 'A', 'T', 'C', 'G'}):
+def number_of_greater_words(string:str,alphabet = {'A', 'T', 'C', 'G'}):
     # greater or equal
     greater_letters_dic = number_of_greater_letters(alphabet)
 
