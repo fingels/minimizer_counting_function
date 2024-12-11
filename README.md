@@ -1,4 +1,4 @@
-# Minimizer Counting Function
+# MCF - Minimizer Counting Function
 
 Provided an alphabet $\Sigma$, two integers $m\leq k$ and a word $w\in\Sigma^m$, we define the quantity
 
