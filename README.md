@@ -6,9 +6,12 @@ $$\pi_k(w) = |\lbrace x\in\Sigma^k : \min(x) = w\rbrace|$$
 
 where $\min(x)$ designates the minimizer of $x$ for the lexicographical order, i.e. the smallest substring of size $m$ found in $x$.
 
+In other words, $\pi_k(w)$ stands for the number of $k$-mers (among all $|\Sigma|^k$ possible ones) that admit $w$ as a lexicographical minimizer.
+
 The purpose of this module is to compute $\pi_k(w)$, following the principles defined in the following paper:
 
 > _On the number of $k$-mers admitting a given lexicographical minimizer_, F. Ingels, C. Marchet, M. Salson, Univ. Lille.
+> 
 > [ref to arxiv]
 
 ### Dependencies
@@ -38,7 +41,7 @@ print(obj.kmer_upper_bound(k))
 >>> 353
 ```
 
-By default, the alphabet is `{ 'A', 'C', 'T','G'}`.  If you want to use another alphabet, use 
+By default, the alphabet is `{'A','C','T','G'}`.  If you want to use another alphabet, use 
 ```
 obj = MinimizerCountingFunction(minimizer,alphabet=my_custom_alphabet)
 ```
