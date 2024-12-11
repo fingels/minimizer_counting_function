@@ -41,7 +41,6 @@ with open('../Data/'+filename, newline='') as csvfile:
             dico[m][minimizer]=int(count)
             sum[m]+=int(count)
 
-
 k = int(k)
 greater_letters_dic = number_of_greater_letters()
 
@@ -74,6 +73,8 @@ for m in dico.keys():
     i = 0
 
     print('Processing '+filename+' with the following values : k=%i, m=%i' % (k,m))
+    print('# of minimizers', len(minimizers_list[m]))
+    print('# of kmers: ',sum[m])
 
     for minimizer in minimizers_list[m][:N]:
         sys.stdout.write("\rProgression: %i/%i" % (i + 1, len(minimizers_list[m])))

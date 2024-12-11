@@ -3,7 +3,6 @@ import sys
 from src.lib import *
 import matplotlib.pyplot as plt
 from matplotlib import rc
-
 compl = {'A': 'T', 'C':'G', 'G':'C', 'T':'A'}
 
 def reverse_complement(kmer):
@@ -14,8 +13,8 @@ def canonical(kmer):
 
 ###########################################################################
 
-k = 10
-m = 4
+k = 15
+m = 7
 
 ###########################################################################
 
@@ -85,12 +84,11 @@ fontsize = 30
 
 fig, ax = plt.subplots(figsize=(12, 8))
 
-plt.axhline(y=4**(k-m),c='C3',label='_nolegend_')
 plt.axhline(y=4**(-1),c='C3',ls='--',alpha=0.25,label='_nolegend_')
 ax.plot(x,count,lw=0.5)
 ax.plot(x,c_count,lw=0.5)
 
-leg = ax.legend(['Regular', 'Canonical'], fontsize=fontsize, loc='lower left')
+leg = ax.legend(['Regular', 'Canonical'], fontsize=fontsize, loc='upper right')
 
 for line in leg.get_lines():
     line.set_linewidth(4.0)
@@ -100,7 +98,6 @@ x_ticks_positions = [0,n,2*n,3*n,len(minimizers_list)-1]
 x_ticks_labels = [r'\texttt{'+minimizers_list[i][:3]+'}$\cdots$' for i in x_ticks_positions]
 plt.xticks(x_ticks_positions,x_ticks_labels,fontsize=fontsize)
 
-plt.text(len(minimizers_list)-1, 4**(k-m+0.25), r'$4^{k-m}$', ha='right', va='center',fontsize=fontsize)
 plt.text(len(minimizers_list)-1, 4**(-1+0.25), 'Empty', ha='right', va='center',fontsize=fontsize)
 
 ax.yaxis.get_major_locator().set_params(integer=True)
