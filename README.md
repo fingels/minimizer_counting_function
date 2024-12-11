@@ -43,15 +43,17 @@ print(obj.kmer_upper_bound(k))
 
 By default, the alphabet is `{'A','C','T','G'}`.  If you want to use another alphabet, use 
 ```
-obj = MinimizerCountingFunction(minimizer,alphabet=my_custom_alphabet)
+obj = MinimizerCountingFunction(minimizer,alphabet=my_alphabet)
 ```
 Make sure that the minimizer is written in said alphabet. `my_custom_alphabet` should be a set of characters.
 
 If you want to use a custom ordering of the letters instead of the classical one `A < B < ...`, define a dictionary where each key is a letter of the alphabet, and the value is the number of letters strictly greater that the key in the alphabet. For practical reasons, the dictionary must also have `my_dict[' ']=len(alphabet)`. 
 
-As an example, the default dictionary is `{'A':3,'C':2,'G':1,'T':0,' ':4}`.
+As an example, the dictionary associated to the default alphabet is `{'A':3,'C':2,'G':1,'T':0,' ':4}`.
 
 Then use 
 ```
 obj = MinimizerCountingFunction(minimizer,number_of_greater_letters_dic=my_dict)
 ```
+
+You can simultaneously use a custom alphabet and a custom order of the letters of that alphabet by providing both arguments to `MinimizerCountingFunction`. In the case of a custom alphabet only, the dictionary will be automatically computed using standard lexicographical order.
