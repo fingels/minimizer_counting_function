@@ -39,9 +39,13 @@ print(obj.kmer_upper_bound(k))
 ```
 
 If you want to use another alphabet, use 
-```MinimizerCountingFunction(minimizer,alphabet=my_custom_alphabet)```
+```
+obj = MinimizerCountingFunction(minimizer,alphabet=my_custom_alphabet)
+```
 Make sure that the minimizer is written in said alphabet. `my_custom_alphabet` should be a set of strings.
 
 If you want to use a custom ordering of the letters instead of the classical one `A < B < ...`, you must define yourself a dictionary where each key is a letter of the alphabet, and the value is the number of letters strictly greater that the key in the alphabet. For practical reasons, the dictionary must also have `my_dict[' ']=len(alphabet)`. 
 Then use 
-```MinimizerCountingFunction(minimizer,number_of_greater_letters_dic=my_dict)```
+```
+obj = MinimizerCountingFunction(minimizer,number_of_greater_letters_dic=my_dict)
+```
