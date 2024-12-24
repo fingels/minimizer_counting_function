@@ -13,8 +13,8 @@ def canonical(kmer):
 
 ###########################################################################
 
-k = 15
-m = 7
+k = 12
+m = 4
 
 ###########################################################################
 
@@ -84,7 +84,7 @@ fontsize = 30
 
 fig, ax = plt.subplots(figsize=(12, 8))
 
-plt.axhline(y=4**(-1),c='C3',ls='--',alpha=0.25,label='_nolegend_')
+plt.axhline(y=4**(-1),c='C3',ls='--',alpha=0.5,label='_nolegend_')
 ax.plot(x,count,lw=0.5)
 ax.plot(x,c_count,lw=0.5)
 
