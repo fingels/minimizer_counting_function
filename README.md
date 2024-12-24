@@ -10,8 +10,8 @@ In other words, $\pi_k(w)$ stands for the number of $k$-mers (among all $|\Sigma
 
 The purpose of this module is to compute $\pi_k(w)$, following the principles defined in the following paper:
 
-> _On the number of $k$-mers admitting a given lexicographical minimizer_, F. Ingels, C. Marchet, M. Salson, Univ. Lille.
-> 
+> _On the number of $k$-mers admitting a given lexicographical minimizer_
+> F. Ingels, C. Marchet, M. Salson, Univ. Lille.
 > (https://arxiv.org/abs/2412.17492)
 
 ### Dependencies
