@@ -1,5 +1,7 @@
 from random import randint
 
+
+
 def int_to_bin(num):
     '''Convert an int to a binary array'''
     binary = []
@@ -58,6 +60,9 @@ def find_minimizer(string: str, m: int):
 
     return index_min
 
+def dna_reverse(letter):
+    dic = {'A':'T', 'C':'G','G':'C', 'T':'A'}
+    return dic[letter]
 
 def number_of_greater_letters(alphabet = {'A', 'T', 'C', 'G'}):
     dic = {}
