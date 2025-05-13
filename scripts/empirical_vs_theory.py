@@ -9,9 +9,9 @@ import sys
 
 # name = "fusion61"
 # name = "chrY_k31"
-# name = "ecoli_k21"
+name = "ecoli_k21"
 # name = "Hg_chr1"
-name = "Hg_chr1_m21"
+# name = "Hg_chr1_m21"
 
 imbalance_only= False
 
@@ -56,6 +56,8 @@ minimizers_list={}
 for m in dico.keys():
     logsum = math.log(sum[m],4)
 
+    sum_theo = 0
+
     minimizers_list[m] = sorted(dico[m].keys())
 
     x[m] = list(range(len(minimizers_list[m])))
@@ -89,9 +91,11 @@ for m in dico.keys():
             count_theo[m].append(th)
             freq_theo[m].append(math.log(th,4)-k)
 
+            sum_theo+=th
+
         i+=1
 
-    print('\n')
+    print('\nObserved minimizers could explain for %.2f%% of all k-mers.\n' % (100*sum_theo/4**k))
 
 ###########################################################################
 
@@ -101,79 +105,79 @@ fontsize = 30
 
 ###########################################################################
 
-print('Building figures...')
-
-for m in dico.keys():
-
-    fig, ax = plt.subplots(figsize=(12, 8))
-
-    ax.plot(x[m][:N],counts[m],lw=0.5)
-
-    if not imbalance_only:
-        ax.plot(x[m][:N],count_theo[m],lw=0.5)
-
-        leg = ax.legend(['Empirical', 'Theory'],fontsize=fontsize,loc='center left')
-
-        for line in leg.get_lines():
-            line.set_linewidth(4.0)
-
-    n = len(minimizers_list[m]) //4
-    x_ticks_positions = [0,n,2*n,3*n,len(minimizers_list[m])-1]
-    x_ticks_labels = [r'\texttt{'+minimizers_list[m][i][:3]+'}$\cdots$' for i in x_ticks_positions]
-    plt.xticks(x_ticks_positions,x_ticks_labels,fontsize=fontsize)
-
-    if imbalance_only:
-
-        from matplotlib.ticker import ScalarFormatter
-
-        class ScalarFormatterForceFormat(ScalarFormatter):
-            def _set_format(self):  # Override function that finds format to use.
-                self.format = "%1.1f"  # Give format here
-
-        yfmt = ScalarFormatterForceFormat()
-        yfmt.set_powerlimits((0,0))
-        ax.yaxis.set_major_formatter(yfmt)
-        ax.ticklabel_format(axis='y', style='sci', scilimits=(0, 2))
-    else:
-        ax.set_yscale("log", base=4)
-
-    # ax.yaxis.get_major_locator().set_params(integer=True)
-    plt.yticks(fontsize=fontsize)
-    ax.yaxis.get_offset_text().set_fontsize(fontsize)
-
-    # plt.show()
-    fig.tight_layout()
-
-    if imbalance_only:
-        fig.savefig('../Figures_empirical/imbalance_'+name+'_k='+str(k)+'_m='+str(m)+'.pdf')
-    else:
-        fig.savefig('../Figures_empirical/theory_vs_'+name+'_k='+str(k)+'_m='+str(m)+'.pdf')
-
-    ###########################################################################
-
-    if not imbalance_only:
-
-        fig, ax = plt.subplots(figsize=(12, 8))
-
-        ax.plot(x[m][:N],freq_empirical[m],alpha=0.75,lw=0.75)
-        ax.plot(x[m][:N],freq_theo[m],alpha=0.5,lw=0.5)
-
-        leg = ax.legend(['Empirical', 'Theory'],fontsize=fontsize,loc='lower left')
-
-        for line in leg.get_lines():
-            line.set_linewidth(4.0)
-
-        n = len(minimizers_list[m]) //4
-        x_ticks_positions = [0,n,2*n,3*n,len(minimizers_list[m])-1]
-        x_ticks_labels = [r'\texttt{'+minimizers_list[m][i][:3]+'}$\cdots$' for i in x_ticks_positions]
-        plt.xticks(x_ticks_positions,x_ticks_labels,fontsize=fontsize)
-
-        ax.yaxis.get_major_locator().set_params(integer=True)
-        plt.yticks(fontsize=fontsize)
-        ax.yaxis.get_offset_text().set_fontsize(fontsize)
-
-        # plt.show()
-        fig.tight_layout()
-        fig.savefig('../Figures_empirical/frequences_'+name+'_k='+str(k)+'_m='+str(m)+'.pdf')
-
-print('... done.')
+# print('Building figures...')
+#
+# for m in dico.keys():
+#
+#     fig, ax = plt.subplots(figsize=(12, 8))
+#
+#     ax.plot(x[m][:N],counts[m],lw=0.5)
+#
+#     if not imbalance_only:
+#         ax.plot(x[m][:N],count_theo[m],lw=0.5)
+#
+#         leg = ax.legend(['Empirical', 'Theory'],fontsize=fontsize,loc='center left')
+#
+#         for line in leg.get_lines():
+#             line.set_linewidth(4.0)
+#
+#     n = len(minimizers_list[m]) //4
+#     x_ticks_positions = [0,n,2*n,3*n,len(minimizers_list[m])-1]
+#     x_ticks_labels = [r'\texttt{'+minimizers_list[m][i][:3]+'}$\cdots$' for i in x_ticks_positions]
+#     plt.xticks(x_ticks_positions,x_ticks_labels,fontsize=fontsize)
+#
+#     if imbalance_only:
+#
+#         from matplotlib.ticker import ScalarFormatter
+#
+#         class ScalarFormatterForceFormat(ScalarFormatter):
+#             def _set_format(self):  # Override function that finds format to use.
+#                 self.format = "%1.1f"  # Give format here
+#
+#         yfmt = ScalarFormatterForceFormat()
+#         yfmt.set_powerlimits((0,0))
+#         ax.yaxis.set_major_formatter(yfmt)
+#         ax.ticklabel_format(axis='y', style='sci', scilimits=(0, 2))
+#     else:
+#         ax.set_yscale("log", base=4)
+#
+#     # ax.yaxis.get_major_locator().set_params(integer=True)
+#     plt.yticks(fontsize=fontsize)
+#     ax.yaxis.get_offset_text().set_fontsize(fontsize)
+#
+#     # plt.show()
+#     fig.tight_layout()
+#
+#     if imbalance_only:
+#         fig.savefig('../Figures_empirical/imbalance_'+name+'_k='+str(k)+'_m='+str(m)+'.pdf')
+#     else:
+#         fig.savefig('../Figures_empirical/theory_vs_'+name+'_k='+str(k)+'_m='+str(m)+'.pdf')
+#
+#     ###########################################################################
+#
+#     if not imbalance_only:
+#
+#         fig, ax = plt.subplots(figsize=(12, 8))
+#
+#         ax.plot(x[m][:N],freq_empirical[m],alpha=0.75,lw=0.75)
+#         ax.plot(x[m][:N],freq_theo[m],alpha=0.5,lw=0.5)
+#
+#         leg = ax.legend(['Empirical', 'Theory'],fontsize=fontsize,loc='lower left')
+#
+#         for line in leg.get_lines():
+#             line.set_linewidth(4.0)
+#
+#         n = len(minimizers_list[m]) //4
+#         x_ticks_positions = [0,n,2*n,3*n,len(minimizers_list[m])-1]
+#         x_ticks_labels = [r'\texttt{'+minimizers_list[m][i][:3]+'}$\cdots$' for i in x_ticks_positions]
+#         plt.xticks(x_ticks_positions,x_ticks_labels,fontsize=fontsize)
+#
+#         ax.yaxis.get_major_locator().set_params(integer=True)
+#         plt.yticks(fontsize=fontsize)
+#         ax.yaxis.get_offset_text().set_fontsize(fontsize)
+#
+#         # plt.show()
+#         fig.tight_layout()
+#         fig.savefig('../Figures_empirical/frequences_'+name+'_k='+str(k)+'_m='+str(m)+'.pdf')
+#
+# print('... done.')
