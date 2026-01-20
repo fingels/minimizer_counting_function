@@ -7,7 +7,7 @@ import pickle
 
 k = 31
 m = 10
-compute_bounds = True
+compute_bounds = False
 
 #####################################
 
@@ -49,7 +49,8 @@ for i in range(4**m):
 
     minimizer_dic[minimizer]= N
 
-    assert bound_up[minimizer] >= N >= bound_low[minimizer], minimizer
+    if compute_bounds:
+        assert bound_up[minimizer] >= N >= bound_low[minimizer], minimizer
 
 assert somme == 4**k
 
@@ -60,12 +61,12 @@ print('\nDone in %s seconds' % t)
 if compute_bounds:
     print('Encountered %i tight bounds, representing %.0f%% of all minimizers; among which they were %i equal bounds, for %.0f%% of all minimizers.' % (
         equal_bounds+tight_bounds, 100 * (equal_bounds+tight_bounds) / 4 ** m,equal_bounds, 100*equal_bounds/4**m))
-
-with open('../Data/enumeration_k='+str(k)+'_m='+str(m)+'.p', 'wb') as f:
-    pickle.dump(minimizer_dic, f)
-
-if compute_bounds:
-    bounds = {'up':bound_up, 'low':bound_low}
-    with open('../Data/bounds_k=' + str(k) + '_m=' + str(m) + '.p', 'wb') as f:
-        pickle.dump(bounds, f)
+#
+# with open('../Data/enumeration_k='+str(k)+'_m='+str(m)+'.p', 'wb') as f:
+#     pickle.dump(minimizer_dic, f)
+#
+# if compute_bounds:
+#     bounds = {'up':bound_up, 'low':bound_low}
+#     with open('../Data/bounds_k=' + str(k) + '_m=' + str(m) + '.p', 'wb') as f:
+#         pickle.dump(bounds, f)
 

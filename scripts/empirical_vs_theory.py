@@ -8,8 +8,8 @@ import sys
 ###########################################################################
 
 # name = "fusion61"
-# name = "chrY_k31"
-name = "ecoli_k21"
+name = "chrY_k31"
+# name = "ecoli_k21"
 # name = "Hg_chr1"
 # name = "Hg_chr1_m21"
 

@@ -3,7 +3,7 @@ from copy import copy, deepcopy
 
 class EnumerationInstance(object):
 
-    __slots__ = 'minimizer','indeterminate_string', 'kmer', 'reverse_complement','m', 'current_position', 'min_starting_position','k', 'alphabet'
+    __slots__ = 'minimizer','indeterminate_string', 'kmer', 'reverse_complement','m', 'current_position', 'min_starting_position','k', 'alphabet','remaining_letters'
 
     def __init__(self,string,starting_position,k,alphabet = {'A','C','G','T'}):
         self.m: int = len(string)
@@ -11,6 +11,7 @@ class EnumerationInstance(object):
         self.alphabet: set[str] = copy(alphabet)
         self.minimizer: str = copy(string)
         self.min_starting_position: int = starting_position
+        self.remaining_letters: int = self.k - self.m
 
         self.indeterminate_string : list[set[str]] = [copy(alphabet)]*k
         self.kmer: list[str] = ['_']*k
@@ -42,6 +43,7 @@ class EnumerationInstance(object):
         new_obj.reverse_complement = deepcopy(self.reverse_complement)
 
         new_obj.current_position = self.current_position
+        new_obj.remaining_letters = self.remaining_letters
 
         return new_obj
 
@@ -54,7 +56,10 @@ class EnumerationInstance(object):
             if b is not '_':
                 if a<b:
                     # kmer < reverse_complement : terminal state, we can proceed
-                    return [('kmer < reverse_complement', self)]
+                    if self.remaining_letters==0:
+                        return [('check m-mers',self)]
+                    else:
+                        return [('complete k-mer', self)]
                 elif a==b:
                     # we continue to parse the kmer
                     self.current_position+=1
@@ -76,6 +81,7 @@ class EnumerationInstance(object):
                 new_obj.kmer[new_obj.k-new_obj.current_position-1] = dna_reverse(a)
                 new_obj.indeterminate_string[new_obj.k-new_obj.current_position-1] = set(dna_reverse(a))
                 new_obj.current_position+=1
+                new_obj.remaining_letters-=1
 
                 if new_obj.current_position==new_obj.k:
                     new_instances.append(('not canonical',0))
@@ -89,8 +95,12 @@ class EnumerationInstance(object):
                     new_obj.reverse_complement[new_obj.current_position] = s
                     new_obj.kmer[new_obj.k - new_obj.current_position - 1] = dna_reverse(s)
                     new_obj.indeterminate_string[new_obj.k - new_obj.current_position - 1] = set(dna_reverse(s))
+                    new_obj.remaining_letters -= 1
 
-                    new_instances.append(('kmer < reverse_complement', new_obj))
+                    if new_obj.remaining_letters == 0:
+                        new_instances.append(('check m-mers', new_obj))
+                    else:
+                        new_instances.append(('complete k-mer', new_obj))
 
                 return new_instances
         else:
@@ -110,8 +120,8 @@ def canonical_enumeration(minimizer,k):
 
         stack.append(obj)
 
-        print(obj)
-        print('----')
+        # print(obj)
+        # print('----')
 
     print('Processing stack')
     print('****************')
@@ -123,13 +133,13 @@ def canonical_enumeration(minimizer,k):
         obj = stack.pop()
         states_processed+=1
 
-        print(obj)
+        # print(obj)
 
         list = obj.process_state()
 
         for flag,obj in list:
 
-            print(flag)
+            # print(flag)
 
             if flag=='keep':
                 stack.append(obj)
@@ -138,7 +148,7 @@ def canonical_enumeration(minimizer,k):
             else:
                 terminal_states.append((flag,obj))
 
-        print('------')
+        # print('------')
 
     return terminal_states, states_processed
 

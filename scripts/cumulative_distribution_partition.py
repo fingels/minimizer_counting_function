@@ -13,8 +13,8 @@ def complement(string):
 
 #####################################
 
-k = 21
-m = 5
+k = 31
+m = 8
 
 #####################################
 
@@ -84,7 +84,7 @@ fontsize = 30
 
 fig, ax = plt.subplots(figsize=(12, 8))
 
-# plt.axhline(y=4**(k-m),c='C3',label='_nolegend_')
+plt.axhline(y=4**(k-m),c='C3',label='_nolegend_')
 # ax.plot(x,cumulative_count,lw=0.5)
 ax.plot(x,compl_sum,lw=0.5)
 
@@ -93,7 +93,10 @@ x_ticks_positions = [0,n,2*n,3*n,len(minimizers_list)-1]
 x_ticks_labels = [r'\texttt{'+minimizers_list[i][:3]+'}$\cdots$' for i in x_ticks_positions]
 plt.xticks(x_ticks_positions,x_ticks_labels,fontsize=fontsize)
 
-# plt.text(len(minimizers_list)-1, 4**(k-m+0.5), r'$4^{k-m}$', ha='right', va='center',fontsize=fontsize)
+plt.axvline(x=2*n-0.5,c='C4',label='_nolegend_')
+plt.text(2*n, 4**(k-m+1.5), 'Symmetry axis', ha='left', va='center',fontsize=fontsize)
+
+plt.text(len(minimizers_list)-1, 4**(k-m+0.5), r'$4^{k-m}$', ha='right', va='center',fontsize=fontsize)
 
 ax.yaxis.get_major_locator().set_params(integer=True)
 plt.yticks(fontsize=fontsize)
@@ -103,4 +106,4 @@ ax.set_yscale("log",base=4)
 plt.show()
 fig.tight_layout()
 
-# fig.savefig('../Figures_theory/enumeration_k=' + str(k) + '_m=' + str(m) + '.pdf')
+fig.savefig('../Figures_theory/grouping_minimizer_with_reverse_complement_k=' + str(k) + '_m=' + str(m) + '.pdf')

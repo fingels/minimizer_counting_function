@@ -1,7 +1,5 @@
 from random import randint
 
-
-
 def int_to_bin(num):
     '''Convert an int to a binary array'''
     binary = []
@@ -11,7 +9,6 @@ def int_to_bin(num):
         num = num // 2
     binary.reverse()
     return binary
-
 
 def int_to_kmer(num,k):
     '''Convert an int to the corresponding k-mer'''
@@ -41,7 +38,7 @@ def generate_random_k_mers(k,n=1):
         list =  []
         for i in range(n):
             list.append(int_to_kmer(randint(0,nmax),k))
-
+        return list
 
 def find_minimizer(string: str, m: int):
     '''
