@@ -1,5 +1,34 @@
 from random import randint
 
+def xor_char(a,b):
+    '''Implement XOR between two letters from the alphabet A,T,C,G'''
+    x = min(a,b)
+    y = max(a,b)
+
+    if x==y:
+        return 'A'
+    elif x=='A':
+        return y
+    elif (x,y)==('C','G'):
+        return 'T'
+    elif (x,y)==('C','T'):
+        return 'G'
+    elif (x,y)==('G','T'):
+        return 'C'
+    else:
+        return ' '
+
+def xor_word(x,y):
+    '''Compute the word  = (x XOR y)'''
+
+    assert len(x)==len(y), str(x)+'|'+str(y)
+    z = ''
+
+    for i in range(len(x)):
+        z+= xor_char(x[i],y[i])
+
+    return z
+
 def int_to_bin(num):
     '''Convert an int to a binary array'''
     binary = []
