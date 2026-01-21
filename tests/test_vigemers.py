@@ -1,10 +1,13 @@
-from src.lib import MinimizerCountingFunction
+from src.lib import VigeminCountingFunction
 from src.utils import *
 import unittest
 import os
+import random
 import cmath
 
-class TestRegularKmerEnumeration(unittest.TestCase):
+random.seed(1234)
+
+class TestVigemerEnumeration(unittest.TestCase):
 
     def setUp(self):
         self.data_dir = 'tmp/test/'
@@ -13,52 +16,45 @@ class TestRegularKmerEnumeration(unittest.TestCase):
 
         self.k = 10
         self.m = 5
-        self.greater_letters_dic = number_of_greater_letters()
-        self.minimizers = {}
+        self.key = generate_random_k_mers(self.m)
+        self.vigemins = {}
 
     def tearDown(self):
         for file in os.listdir(self.data_dir):
             os.remove(self.data_dir+file)
         os.removedirs(self.data_dir)
 
+    def test_enumerate_kmer_and_vigemins(self):
 
-    def test_enumerate_kmer_and_minimizers(self):
         for i in range(4**self.k):
             kmer = int_to_kmer(i, self.k)
-            min_index = find_minimizer(kmer,self.m)
-            found_minimizer = kmer[min_index:min_index+self.m]
+            min_index = find_vigemin(kmer,self.key,self.m)
+            found_vigemin = kmer[min_index:min_index+self.m]
 
-            if found_minimizer not in self.minimizers.keys():
-                self.minimizers[found_minimizer]=0
+            if found_vigemin not in self.vigemins.keys():
+                self.vigemins[found_vigemin]=0
 
-            self.minimizers[found_minimizer]+=1
+            self.vigemins[found_vigemin]+=1
 
-        assert len(self.minimizers.keys())==4**self.m
+    def test_found_vigemin_count(self):
+        for vigemin in self.vigemins.keys():
+            assert VigeminCountingFunction(vigemin,self.key).kmer(self.k) == self.vigemins[vigemin]
 
-    def test_found_minimizers_count(self):
-        for minimizer in self.minimizers.keys():
-            obj = MinimizerCountingFunction(minimizer,number_of_greater_letters_dic=self.greater_letters_dic)
-
-            assert obj.kmer(self.k) == self.minimizers[minimizer]
-
-            assert obj.kmer_upper_bound(self.k) >= obj.kmer(self.k)
-            assert obj.kmer_lower_bound(self.k) <= obj.kmer(self.k)
-
-class TestRegularKmerUnique(unittest.TestCase):
+class TestVigemerUnique(unittest.TestCase):
 
     def setUp(self):
         self.data_dir = 'tmp/test/'
         if not os.path.exists(self.data_dir):
             os.makedirs(self.data_dir)
 
-        self.greater_letters_dic = number_of_greater_letters()
         self.minimizer = 'ACACAA'
+        self.key = 'CTCAAT'
         self.alpha_value = 10
         self.beta_value = 10
 
         self.m = len(self.minimizer)
 
-        self.obj = MinimizerCountingFunction(self.minimizer, number_of_greater_letters_dic=self.greater_letters_dic)
+        self.obj = VigeminCountingFunction(self.minimizer, self.key)
 
         if self.obj.postmer_max_size != cmath.inf:
             self.beta_value = self.obj.postmer_max_size - 1
@@ -81,9 +77,9 @@ class TestRegularKmerUnique(unittest.TestCase):
             acceptables = []
 
             for kmer in candidates:
-                min_index = find_minimizer(kmer,self.m)
-                found_minimizer = kmer[min_index:min_index+self.m]
-                if found_minimizer==self.minimizer and min_index==alpha:
+                min_index = find_vigemin(kmer,self.key,self.m)
+                found_vigemin = kmer[min_index:min_index+self.m]
+                if found_vigemin==self.minimizer and min_index==alpha:
                     acceptables.append(kmer)
 
             assert self.antemers[alpha]==len(acceptables)
@@ -98,9 +94,9 @@ class TestRegularKmerUnique(unittest.TestCase):
             acceptables = []
 
             for kmer in candidates:
-                min_index = find_minimizer(kmer,self.m)
-                found_minimizer = kmer[min_index:min_index+self.m]
-                if found_minimizer>=self.minimizer:
+                min_index = find_vigemin(kmer,self.key,self.m)
+                found_vigemin = kmer[min_index:min_index+self.m]
+                if xor_word(found_vigemin,self.key)>=xor_word(self.minimizer,self.key):
                     acceptables.append(kmer)
 
             assert self.postmers[beta]==len(acceptables)

@@ -4,6 +4,7 @@ from typing import Callable
 
 # TODO : refactor with integers instead of letters ?
 # TODO : option to return list of values instead of just one
+# TODO : add tests for VCF
 # WARNING : VCF does not have upper and lower bounds implemented
 
 class MinimizerCountingFunction(object):
