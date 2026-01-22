@@ -1,5 +1,8 @@
 # MCF - Minimizer Counting Function
 
+
+## Lexicographical minimizer counting function
+
 Provided an alphabet $\Sigma$, two integers $m\leq k$ and a word $w\in\Sigma^m$, we define the quantity
 
 $$\pi_k(w) = |\lbrace x\in\Sigma^k : \min(x) = w\rbrace|$$
@@ -57,3 +60,7 @@ obj = LexMinimizerCountingFunction(minimizer,number_of_greater_letters_dic=my_di
 ```
 
 You can simultaneously use a custom alphabet and a custom order of the letters of that alphabet by providing both arguments to `MinimizerCountingFunction`. In the case of a custom alphabet only, the dictionary will be automatically computed using standard lexicographical order.
+
+## Vigemin counting function
+
+TODO
