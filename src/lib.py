@@ -7,7 +7,7 @@ from typing import Callable
 # TODO : add tests for VCF
 # WARNING : VCF does not have upper and lower bounds implemented
 
-class MinimizerCountingFunction(object):
+class LexMinimizerCountingFunction(object):
     __slots__ = ('autocorrelation_matrix', 'alphabet', 'minimizer', 'length',
                  'antemer_max_prefix_size', 'postmer_max_size', 'prefix_letters_vectors', 'a_max', 'number_of_greater_letters',
                  'number_of_greater_words','postmer_small_values_alphabet_zero', 'postmer_small_values_alphabet_not_zero',

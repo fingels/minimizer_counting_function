@@ -1,4 +1,4 @@
-from src.lib import MinimizerCountingFunction
+from src.lib import LexMinimizerCountingFunction
 from src.utils import *
 import unittest
 import os
@@ -37,7 +37,7 @@ class TestRegularKmerEnumeration(unittest.TestCase):
 
     def test_found_minimizers_count(self):
         for minimizer in self.minimizers.keys():
-            obj = MinimizerCountingFunction(minimizer,number_of_greater_letters_dic=self.greater_letters_dic)
+            obj = LexMinimizerCountingFunction(minimizer, number_of_greater_letters_dic=self.greater_letters_dic)
 
             assert obj.kmer(self.k) == self.minimizers[minimizer]
 
@@ -58,7 +58,7 @@ class TestRegularKmerUnique(unittest.TestCase):
 
         self.m = len(self.minimizer)
 
-        self.obj = MinimizerCountingFunction(self.minimizer, number_of_greater_letters_dic=self.greater_letters_dic)
+        self.obj = LexMinimizerCountingFunction(self.minimizer, number_of_greater_letters_dic=self.greater_letters_dic)
 
         if self.obj.postmer_max_size != cmath.inf:
             self.beta_value = self.obj.postmer_max_size - 1

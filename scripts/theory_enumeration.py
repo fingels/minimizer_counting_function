@@ -28,7 +28,7 @@ for i in range(4**m):
     sys.stdout.write("\rProgression: %i/%i" % (i+1,4**m))
     minimizer = int_to_kmer(i,m)
 
-    obj = MinimizerCountingFunction(minimizer, number_of_greater_letters_dic=greater_letters_dic)
+    obj = LexMinimizerCountingFunction(minimizer, number_of_greater_letters_dic=greater_letters_dic)
 
     if compute_bounds:
         bound_up[minimizer] = obj.kmer_upper_bound(k)

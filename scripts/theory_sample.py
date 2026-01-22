@@ -29,7 +29,7 @@ for i in numbers:
     sys.stdout.write("\rProgression: %i/%i" % (j+1,len(numbers)))
     minimizer = int_to_kmer(i,m)
 
-    obj = MinimizerCountingFunction(minimizer, number_of_greater_letters_dic=greater_letters_dic)
+    obj = LexMinimizerCountingFunction(minimizer, number_of_greater_letters_dic=greater_letters_dic)
 
     N = obj.kmer(k)
 

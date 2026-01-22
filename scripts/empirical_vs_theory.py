@@ -86,7 +86,7 @@ for m in dico.keys():
         if not imbalance_only:
             freq_empirical[m].append(math.log(dico[m][minimizer],4)-logsum)
 
-            obj = MinimizerCountingFunction(minimizer, number_of_greater_letters_dic=greater_letters_dic)
+            obj = LexMinimizerCountingFunction(minimizer, number_of_greater_letters_dic=greater_letters_dic)
             th = obj.kmer(k)
             count_theo[m].append(th)
             freq_theo[m].append(math.log(th,4)-k)

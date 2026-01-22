@@ -6,7 +6,7 @@ k=10
 m=len(minimizer)
 greater_letters_dic = number_of_greater_letters()
 
-obj = MinimizerCountingFunction(minimizer,number_of_greater_letters_dic=greater_letters_dic)
+obj = LexMinimizerCountingFunction(minimizer, number_of_greater_letters_dic=greater_letters_dic)
 
 print(obj.antemer_upper_bound(k))
 print(obj.antemer(k))

@@ -9,7 +9,7 @@ minimizer_list = ['AAAAAA','ACACAA','ACACAC','CAAAAA','GAAAAA','TAAAAA']
 m=max([len(mini) for mini in minimizer_list])
 greater_letters_dic = number_of_greater_letters()
 
-obj_list = {mini:MinimizerCountingFunction(mini,number_of_greater_letters_dic=greater_letters_dic) for mini in minimizer_list}
+obj_list = {mini:LexMinimizerCountingFunction(mini, number_of_greater_letters_dic=greater_letters_dic) for mini in minimizer_list}
 
 x = []
 y = {mini: [] for mini in minimizer_list}

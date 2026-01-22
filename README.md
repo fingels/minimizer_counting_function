@@ -25,12 +25,12 @@ To reproduce the figures of the paper and the associated analysis, make sure to 
 ### Usage of the module
 
 ```
-from src.lib import MinimizerCountingFunction
+from src.lib import LexMinimizerCountingFunction
 
 minimizer = 'ACACAA'
 k = 10
 
-obj = MinimizerCountingFunction(minimizer)
+obj = LexMinimizerCountingFunction(minimizer)
 
 print(obj.kmer_lower_bound(k))
 print(obj.kmer(k))
@@ -43,7 +43,7 @@ print(obj.kmer_upper_bound(k))
 
 By default, the alphabet is `{'A','C','T','G'}`.  If you want to use another alphabet, use 
 ```
-obj = MinimizerCountingFunction(minimizer,alphabet=my_alphabet)
+obj = LexMinimizerCountingFunction(minimizer,alphabet=my_alphabet)
 ```
 Make sure that the minimizer is written in said alphabet. `my_custom_alphabet` should be a set of characters.
 
@@ -53,7 +53,7 @@ As an example, the dictionary associated to the default alphabet is `{'A':3,'C':
 
 Then use 
 ```
-obj = MinimizerCountingFunction(minimizer,number_of_greater_letters_dic=my_dict)
+obj = LexMinimizerCountingFunction(minimizer,number_of_greater_letters_dic=my_dict)
 ```
 
 You can simultaneously use a custom alphabet and a custom order of the letters of that alphabet by providing both arguments to `MinimizerCountingFunction`. In the case of a custom alphabet only, the dictionary will be automatically computed using standard lexicographical order.

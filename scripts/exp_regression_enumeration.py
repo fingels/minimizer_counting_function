@@ -30,7 +30,7 @@ for i in range(4**m):
 
     minimizers_list.append(minimizer)
 
-    obj = MinimizerCountingFunction(minimizer, number_of_greater_letters_dic=greater_letters_dic)
+    obj = LexMinimizerCountingFunction(minimizer, number_of_greater_letters_dic=greater_letters_dic)
 
     values =[]
 
