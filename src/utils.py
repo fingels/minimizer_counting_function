@@ -69,14 +69,15 @@ def generate_random_k_mers(k,n=1):
             list.append(int_to_kmer(randint(0,nmax),k))
         return list
 
-def find_vigemin(string:str, key:str,m:int):
+def find_vigemin(string:str, key:str):
     '''
-    Returns the index where the smallest substring of size `m`, xored against `key`, of `string` begins.
+    Returns the index where the smallest substring of size `len(key)`, xored against `key`, of `string` begins.
     '''
-    assert len(string) >= m, 'String too short'
-    assert len(key)==m, 'Key should be the same length as m'
+    assert len(string) >= len(key), 'String too short'
 
-    min_vigemer = 'T' * m
+    m=len(key)
+
+    min_vigemer = 'Z' * m
     index_min = float('Inf')
 
     for i in range(len(string)-m+1):
