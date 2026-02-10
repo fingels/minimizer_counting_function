@@ -56,6 +56,8 @@ class TestRegularKmerUnique(unittest.TestCase):
         self.alpha_value = 10
         self.beta_value = 10
 
+        self.max_k_value = 31
+
         self.m = len(self.minimizer)
 
         self.obj = LexMinimizerCountingFunction(self.minimizer, number_of_greater_letters_dic=self.greater_letters_dic)
@@ -70,6 +72,17 @@ class TestRegularKmerUnique(unittest.TestCase):
         for file in os.listdir(self.data_dir):
             os.remove(self.data_dir+file)
         os.removedirs(self.data_dir)
+
+    def test_multiple_values(self):
+
+        all_values = []
+
+        for k in range(self.m,self.max_k_value+1):
+            all_values.append(self.obj.kmer(k))
+
+        all_values_bis = self.obj.kmer(self.max_k_value,return_all_values=True)
+
+        assert tuple(all_values_bis)==tuple(all_values)
 
     def test_antemers(self):
         for alpha in range(self.alpha_value):

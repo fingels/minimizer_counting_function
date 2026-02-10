@@ -3,8 +3,6 @@ from src.utils import *
 from typing import Callable
 
 # TODO : refactor with integers instead of letters ?
-# TODO : option to return list of values instead of just one
-# TODO : add tests for VCF
 # WARNING : VCF does not have upper and lower bounds implemented
 
 class LexMinimizerCountingFunction(object):
@@ -294,7 +292,7 @@ class LexMinimizerCountingFunction(object):
 
         return array_prefix[self.length]
 
-    def kmer(self, k):
+    def kmer(self, k,return_all_values=False):
 
         assert k >= self.length, 'k must be larger or equal to the length of the minimizer'
 
@@ -303,12 +301,27 @@ class LexMinimizerCountingFunction(object):
         antemer_array = self.antemer(k - self.length)
         postmer_array = self.postmer(beta_max + self.length)
 
-        sum = 0
+        if not return_all_values:
+            sum = 0
 
-        for beta in range(0, beta_max + 1):
-            sum += antemer_array[k - self.length - beta] * postmer_array[beta + self.length]
+            for beta in range(0, beta_max + 1):
+                sum += antemer_array[k - self.length - beta] * postmer_array[beta + self.length]
 
-        return sum
+            return sum
+
+        else:
+
+            values = []
+
+            for k_int in range(self.length,k+1):
+                beta_max_int = min(self.postmer_max_size-2,k_int - self.length)
+
+                sum=0
+                for beta in range(0,beta_max_int+1):
+                    sum+= antemer_array[k_int -self.length - beta] * postmer_array[beta+self.length]
+
+                values.append(sum)
+            return values
 
     def kmer_upper_bound(self, k):
         assert k >= self.length, 'k must be larger or equal to the length of the minimizer'
@@ -546,7 +559,7 @@ class VigeminCountingFunction(object):
 
         return array_prefix[self.length]
 
-    def kmer(self, k):
+    def kmer(self, k,return_all_values=False):
 
         assert k >= self.length, 'k must be larger or equal to the length of the minimizer'
 
@@ -555,10 +568,25 @@ class VigeminCountingFunction(object):
         antemer_array = self.antemer(k - self.length)
         postmer_array = self.postmer(beta_max + self.length)
 
-        sum = 0
+        if not return_all_values:
+            sum = 0
 
-        for beta in range(0, beta_max + 1):
-            sum += antemer_array[k - self.length - beta] * postmer_array[beta + self.length]
+            for beta in range(0, beta_max + 1):
+                sum += antemer_array[k - self.length - beta] * postmer_array[beta + self.length]
 
-        return sum
+            return sum
+
+        else:
+
+            values = []
+
+            for k_int in range(self.length,k+1):
+                beta_max_int = min(self.postmer_max_size-2,k_int - self.length)
+
+                sum=0
+                for beta in range(0,beta_max_int+1):
+                    sum+= antemer_array[k_int -self.length - beta] * postmer_array[beta+self.length]
+
+                values.append(sum)
+            return values
 

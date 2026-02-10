@@ -28,7 +28,7 @@ class TestVigemerEnumeration(unittest.TestCase):
 
         for i in range(4**self.k):
             kmer = int_to_kmer(i, self.k)
-            min_index = find_vigemin(kmer,self.key,self.m)
+            min_index = find_vigemin(kmer,self.key)
             found_vigemin = kmer[min_index:min_index+self.m]
 
             if found_vigemin not in self.vigemins.keys():
@@ -52,6 +52,8 @@ class TestVigemerUnique(unittest.TestCase):
         self.alpha_value = 10
         self.beta_value = 10
 
+        self.max_k_value = 31
+
         self.m = len(self.minimizer)
 
         self.obj = VigeminCountingFunction(self.minimizer, self.key)
@@ -67,6 +69,17 @@ class TestVigemerUnique(unittest.TestCase):
             os.remove(self.data_dir+file)
         os.removedirs(self.data_dir)
 
+    def test_multiple_values(self):
+
+        all_values = []
+
+        for k in range(self.m,self.max_k_value+1):
+            all_values.append(self.obj.kmer(k))
+
+        all_values_bis = self.obj.kmer(self.max_k_value,return_all_values=True)
+
+        assert tuple(all_values_bis)==tuple(all_values)
+
     def test_antemers(self):
         for alpha in range(self.alpha_value):
             candidates = []
@@ -77,7 +90,7 @@ class TestVigemerUnique(unittest.TestCase):
             acceptables = []
 
             for kmer in candidates:
-                min_index = find_vigemin(kmer,self.key,self.m)
+                min_index = find_vigemin(kmer,self.key,)
                 found_vigemin = kmer[min_index:min_index+self.m]
                 if found_vigemin==self.minimizer and min_index==alpha:
                     acceptables.append(kmer)
@@ -94,7 +107,7 @@ class TestVigemerUnique(unittest.TestCase):
             acceptables = []
 
             for kmer in candidates:
-                min_index = find_vigemin(kmer,self.key,self.m)
+                min_index = find_vigemin(kmer,self.key)
                 found_vigemin = kmer[min_index:min_index+self.m]
                 if xor_word(found_vigemin,self.key)>=xor_word(self.minimizer,self.key):
                     acceptables.append(kmer)
