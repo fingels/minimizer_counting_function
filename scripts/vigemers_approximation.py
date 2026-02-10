@@ -7,22 +7,7 @@ import numpy as np
 import time
 import sys
 
-def regress_and_predict(data_x,data_y,val_to_pred):
 
-    cov_mat = np.cov(data_x, data_y)
-
-    cov = cov_mat[0][1]
-    vx = cov_mat[0][0]
-    vy = cov_mat[1][1]
-    mx = np.mean(data_x)
-    my = np.mean(data_y)
-
-    a = cov / vx
-    b = my - a * mx
-    #
-    # r = cov / np.sqrt(vx * vy)
-
-    return a*val_to_pred+b
 
 #####################################
 
@@ -61,9 +46,10 @@ for i in range(n_test):
 
         data_y = []
 
-        for k in data_x:
+        values = obj.kmer(k_max,return_all_values=True)
 
-            val = obj.kmer(k)
+        for i in range(k_min-m,k_max-m):
+            val = values[i]
 
             if val == 0:
                 val = -1

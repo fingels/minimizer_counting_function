@@ -1,4 +1,5 @@
 from random import randint
+import numpy as np
 
 def xor_char(a,b):
     '''Implement XOR between two letters from the alphabet A,T,C,G'''
@@ -127,3 +128,20 @@ def number_of_greater_words(string:str,alphabet = {'A', 'T', 'C', 'G'}):
         prod = greater_letters_dic[ai]*len(alphabet)**(m-i-1)
         sum+= prod
     return sum
+
+def regress_and_predict(data_x,data_y,val_to_pred):
+    '''
+    Given training data (data_x,data_y), performs a linear regression of the form y=ax+b and returns `a*(val_to_pred) +b`
+    '''
+
+    cov_mat = np.cov(data_x, data_y)
+
+    cov = cov_mat[0][1]
+    vx = cov_mat[0][0]
+    mx = np.mean(data_x)
+    my = np.mean(data_y)
+
+    a = cov / vx
+    b = my - a * mx
+
+    return a*val_to_pred+b
