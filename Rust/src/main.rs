@@ -1,0 +1,753 @@
+use clap::{Parser, Subcommand};
+use minimizer_vigemin_rust::dna::{decode_index_to_kmer, format_dna_word, parse_dna_word};
+use minimizer_vigemin_rust::vigemin::VigeminCountingFunction;
+use minimizer_vigemin_rust::{enumerate_vigemin_counts_parallel, enumerate_vigemin_stats_parallel};
+use plotters::prelude::*;
+use rand::Rng;
+use rayon::ThreadPoolBuilder;
+use std::fs::{self, File};
+use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+#[derive(Debug, Parser)]
+#[command(name = "vigemin-fast")]
+#[command(about = "High-performance vigemin counting and full minimizer enumeration", long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    /// Count how many k-mers admit one specific minimizer for a given key.
+    Count {
+        #[arg(long)]
+        minimizer: String,
+        #[arg(long)]
+        key: Option<String>,
+        #[arg(long)]
+        k: usize,
+        #[arg(long, default_value_t = false)]
+        all_k: bool,
+    },
+    /// Enumerate counts for all 4^m minimizers for a given key and k.
+    Enumerate {
+        #[arg(long)]
+        m: usize,
+        #[arg(long)]
+        key: Option<String>,
+        #[arg(long)]
+        k: usize,
+        #[arg(long)]
+        threads: Option<usize>,
+        #[arg(long)]
+        output: Option<PathBuf>,
+        #[arg(long, default_value_t = false)]
+        sorted: bool,
+        #[arg(long, default_value_t = false)]
+        non_zero_only: bool,
+    },
+    /// Reproduce the Python vigemers_enumeration workflow over multiple keys and generate plots.
+    EnumerateKeys {
+        #[arg(long, default_value_t = 10)]
+        m: usize,
+        #[arg(long, default_value_t = 31)]
+        k: usize,
+        #[arg(long)]
+        threads: Option<usize>,
+        #[arg(long, default_value = "../Figures_theory")]
+        output_dir: PathBuf,
+        #[arg(long, default_value_t = false)]
+        distribution_plots: bool,
+    },
+}
+
+fn main() -> Result<(), String> {
+    let cli = Cli::parse();
+    match cli.command {
+        Commands::Count {
+            minimizer,
+            key,
+            k,
+            all_k,
+        } => run_count(&minimizer, key.as_deref(), k, all_k),
+        Commands::Enumerate {
+            m,
+            key,
+            k,
+            threads,
+            output,
+            sorted,
+            non_zero_only,
+        } => run_enumerate(m, key.as_deref(), k, threads, output, sorted, non_zero_only),
+        Commands::EnumerateKeys {
+            m,
+            k,
+            threads,
+            output_dir,
+            distribution_plots,
+        } => run_enumerate_keys(m, k, threads, output_dir, distribution_plots),
+    }
+}
+
+fn random_dna_key(m: usize) -> String {
+    let bases = [b'A', b'C', b'G', b'T'];
+    let mut rng = rand::thread_rng();
+    let mut key = String::with_capacity(m);
+    for _ in 0..m {
+        let idx = rng.gen_range(0..bases.len());
+        key.push(bases[idx] as char);
+    }
+    key
+}
+
+fn resolve_thread_count(threads: Option<usize>) -> usize {
+    threads.unwrap_or_else(|| {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    })
+}
+
+fn run_count(minimizer: &str, key: Option<&str>, k: usize, all_k: bool) -> Result<(), String> {
+    let start = Instant::now();
+    let minimizer_codes = parse_dna_word(minimizer)?;
+    let generated_key;
+    let key = match key {
+        Some(value) => value,
+        None => {
+            generated_key = random_dna_key(minimizer_codes.len());
+            eprintln!("generated_key={generated_key}");
+            &generated_key
+        }
+    };
+
+    let counter = VigeminCountingFunction::new(minimizer, key)?;
+    if all_k {
+        let values = counter.kmer_counts_up_to(k)?;
+        for (offset, value) in values.iter().enumerate() {
+            println!("k={}: {}", counter.minimizer_len() + offset, value);
+        }
+    } else {
+        let value = counter.kmer_count(k)?;
+        println!("{value}");
+    }
+    eprintln!("elapsed_ms={}", start.elapsed().as_millis());
+    Ok(())
+}
+
+fn run_enumerate(
+    m: usize,
+    key: Option<&str>,
+    k: usize,
+    threads: Option<usize>,
+    output: Option<PathBuf>,
+    sorted: bool,
+    non_zero_only: bool,
+) -> Result<(), String> {
+    if m == 0 {
+        return Err("m must be >= 1".to_owned());
+    }
+    if k < m {
+        return Err(format!("k must be >= m, got k={k}, m={m}"));
+    }
+    if threads == Some(0) {
+        return Err("threads must be >= 1".to_owned());
+    }
+
+    let generated_key;
+    let key = match key {
+        Some(value) => value.to_owned(),
+        None => {
+            generated_key = random_dna_key(m);
+            eprintln!("generated_key={generated_key}");
+            generated_key
+        }
+    };
+
+    let key_codes = parse_dna_word(&key)?;
+    if key_codes.len() != m {
+        return Err(format!(
+            "key length must match m, got key length {} and m {}",
+            key_codes.len(),
+            m
+        ));
+    }
+
+    let thread_count = resolve_thread_count(threads);
+    ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .build_global()
+        .map_err(|e| format!("failed to set rayon global thread pool: {e}"))?;
+    eprintln!("threads={thread_count}");
+
+    let start = Instant::now();
+    let (total_minimizers, total_count, non_zero, counts_opt) = if output.is_some() {
+        let counts = enumerate_vigemin_counts_parallel(m, &key, k)?;
+        let total_minimizers = counts.len() as u64;
+        let total_count: u128 = counts.iter().sum();
+        let non_zero = counts.iter().filter(|&&v| v > 0).count() as u64;
+        (total_minimizers, total_count, non_zero, Some(counts))
+    } else {
+        let stats = enumerate_vigemin_stats_parallel(m, &key, k)?;
+        (
+            stats.total_minimizers,
+            stats.sum_counts,
+            stats.non_zero,
+            None,
+        )
+    };
+    let elapsed = start.elapsed();
+    let expected_total = (2usize)
+        .checked_mul(k)
+        .and_then(|shift| 1u128.checked_shl(shift as u32));
+
+    println!("m={m} k={k} key={key}");
+    println!("minimizers={total_minimizers}");
+    println!("non_zero={non_zero}");
+    println!("sum_counts={total_count}");
+    if let Some(v) = expected_total {
+        println!("expected_total={v}");
+    } else {
+        println!("expected_total=overflow(u128)");
+    }
+    println!("elapsed_ms={}", elapsed.as_millis());
+
+    if let Some(path) = output {
+        let counts = counts_opt.ok_or_else(|| {
+            "internal error: counts missing while output was requested".to_owned()
+        })?;
+        write_csv(path, &counts, m, sorted, non_zero_only)?;
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+struct KeyEnumeration {
+    key: String,
+    counts: Vec<u128>,
+}
+
+#[derive(Debug)]
+struct KeyRunMetrics {
+    key: String,
+    minimizers: u64,
+    non_zero: u64,
+    sum_counts: u128,
+    elapsed_ms: u128,
+    minimizers_per_sec: f64,
+}
+
+fn generate_script_keys(m: usize) -> Vec<String> {
+    let mut keys = Vec::with_capacity(6);
+    keys.push("A".repeat(m));
+    keys.push(format!("A{}", "T".repeat(m.saturating_sub(1))));
+
+    let mut alternating = String::with_capacity(m);
+    for i in 0..m {
+        alternating.push(if i % 2 == 0 { 'A' } else { 'T' });
+    }
+    keys.push(alternating);
+
+    for prefix in ['C', 'G', 'T'] {
+        let mut key = String::with_capacity(m);
+        key.push(prefix);
+        if m > 1 {
+            key.push_str(&random_dna_key(m - 1));
+        }
+        keys.push(key);
+    }
+
+    keys
+}
+
+fn log4_count(value: u128) -> f64 {
+    if value == 0 {
+        -1.0
+    } else {
+        (value as f64).log(4.0)
+    }
+}
+
+fn draw_panel<DB: DrawingBackend>(
+    area: &DrawingArea<DB, plotters::coord::Shift>,
+    records: &[KeyEnumeration],
+    color_offset: usize,
+    title: &str,
+    x_end: i32,
+    y_min: f64,
+    y_max: f64,
+    average_level: f64,
+) -> Result<(), String>
+where
+    DB::ErrorType: std::fmt::Display,
+{
+    let mut chart = ChartBuilder::on(area)
+        .margin(20)
+        .caption(title, ("sans-serif", 28))
+        .x_label_area_size(40)
+        .y_label_area_size(60)
+        .build_cartesian_2d(0..(x_end + 1), y_min..y_max)
+        .map_err(|e| format!("failed to build chart: {e}"))?;
+
+    chart
+        .configure_mesh()
+        .x_desc("minimizer index (lex order)")
+        .y_desc("log4(count), with zero shown at -1")
+        .x_labels(6)
+        .y_labels(8)
+        .draw()
+        .map_err(|e| format!("failed to draw chart mesh: {e}"))?;
+
+    let avg_style = ShapeStyle::from(&RED.mix(0.55)).stroke_width(2);
+    let empty_style = ShapeStyle::from(&RED.mix(0.3)).stroke_width(1);
+    chart
+        .draw_series(LineSeries::new(
+            vec![(0, average_level), (x_end, average_level)],
+            avg_style,
+        ))
+        .map_err(|e| format!("failed to draw average line: {e}"))?;
+    chart
+        .draw_series(LineSeries::new(vec![(0, -1.0), (x_end, -1.0)], empty_style))
+        .map_err(|e| format!("failed to draw empty line: {e}"))?;
+
+    for (idx, record) in records.iter().enumerate() {
+        let color_idx = color_offset + idx;
+        chart
+            .draw_series(LineSeries::new(
+                record
+                    .counts
+                    .iter()
+                    .enumerate()
+                    .map(|(x, &count)| (x as i32, log4_count(count))),
+                &Palette99::pick(color_idx),
+            ))
+            .map_err(|e| format!("failed to draw key series {}: {e}", record.key))?
+            .label(format!("gamma={}", record.key))
+            .legend(move |(x, y)| {
+                PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(color_idx))
+            });
+    }
+
+    chart
+        .configure_series_labels()
+        .position(SeriesLabelPosition::UpperRight)
+        .background_style(WHITE.mix(0.8))
+        .border_style(BLACK)
+        .draw()
+        .map_err(|e| format!("failed to draw legend: {e}"))?;
+
+    Ok(())
+}
+
+fn plot_throughput(
+    metrics: &[KeyRunMetrics],
+    m: usize,
+    k: usize,
+    output_path: &Path,
+) -> Result<(), String> {
+    if metrics.is_empty() {
+        return Err("cannot plot throughput with empty metric set".to_owned());
+    }
+
+    let max_throughput = metrics
+        .iter()
+        .map(|item| item.minimizers_per_sec)
+        .fold(0.0_f64, f64::max)
+        .max(1.0);
+
+    let root = BitMapBackend::new(output_path, (1800, 1000)).into_drawing_area();
+    root.fill(&WHITE)
+        .map_err(|e| format!("failed to initialize throughput plot background: {e}"))?;
+
+    let mut chart = ChartBuilder::on(&root)
+        .margin(20)
+        .caption(
+            format!("Minimizers per second by key (m={m}, k={k})"),
+            ("sans-serif", 32),
+        )
+        .x_label_area_size(120)
+        .y_label_area_size(80)
+        .build_cartesian_2d(0..(metrics.len() as i32), 0f64..(max_throughput * 1.15))
+        .map_err(|e| format!("failed to build throughput chart: {e}"))?;
+
+    chart
+        .configure_mesh()
+        .x_desc("key index (mapping in CSV/log)")
+        .y_desc("minimizers / second")
+        .x_labels(metrics.len())
+        .y_labels(10)
+        .draw()
+        .map_err(|e| format!("failed to draw throughput mesh: {e}"))?;
+
+    for (idx, item) in metrics.iter().enumerate() {
+        let x0 = idx as i32;
+        let x1 = x0 + 1;
+        chart
+            .draw_series(std::iter::once(Rectangle::new(
+                [(x0, 0.0), (x1, item.minimizers_per_sec)],
+                Palette99::pick(idx).filled(),
+            )))
+            .map_err(|e| format!("failed to draw throughput bar for key {}: {e}", item.key))?;
+    }
+
+    root.present().map_err(|e| {
+        format!(
+            "failed to write throughput plot {}: {e}",
+            output_path.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn write_throughput_csv(path: &Path, metrics: &[KeyRunMetrics]) -> Result<(), String> {
+    let file = File::create(path)
+        .map_err(|e| format!("failed to create throughput CSV {}: {e}", path.display()))?;
+    let mut writer = BufWriter::new(file);
+    writer
+        .write_all(
+            b"key,minimizers,non_zero,sum_counts,elapsed_ms,minimizers_per_second,key_index\n",
+        )
+        .map_err(|e| format!("failed to write throughput CSV header: {e}"))?;
+
+    for (idx, item) in metrics.iter().enumerate() {
+        writeln!(
+            writer,
+            "{},{},{},{},{},{:.6},{}",
+            item.key,
+            item.minimizers,
+            item.non_zero,
+            item.sum_counts,
+            item.elapsed_ms,
+            item.minimizers_per_sec,
+            idx
+        )
+        .map_err(|e| format!("failed to write throughput CSV row: {e}"))?;
+    }
+
+    writer
+        .flush()
+        .map_err(|e| format!("failed to flush throughput CSV {}: {e}", path.display()))?;
+    Ok(())
+}
+
+fn plot_unsorted_panels(
+    records: &[KeyEnumeration],
+    m: usize,
+    k: usize,
+    output_path: &Path,
+) -> Result<(), String> {
+    if records.len() < 6 {
+        return Err("expected at least 6 key series to plot".to_owned());
+    }
+    let count_len = records[0].counts.len();
+    if count_len == 0 {
+        return Err("cannot plot empty series".to_owned());
+    }
+    let x_end = count_len.saturating_sub(1) as i32;
+    let average_level = k.saturating_sub(m) as f64;
+    let mut y_max = average_level;
+    for record in records {
+        for &value in &record.counts {
+            y_max = y_max.max(log4_count(value));
+        }
+    }
+    let y_min = -1.2f64;
+    let y_max = y_max + 0.8;
+
+    let root = BitMapBackend::new(output_path, (2200, 700)).into_drawing_area();
+    root.fill(&WHITE)
+        .map_err(|e| format!("failed to initialize plot background: {e}"))?;
+    let panels = root.split_evenly((1, 2));
+
+    draw_panel(
+        &panels[0],
+        &records[..3],
+        0,
+        "Reference XOR keys",
+        x_end,
+        y_min,
+        y_max,
+        average_level,
+    )?;
+    draw_panel(
+        &panels[1],
+        &records[3..6],
+        3,
+        "Randomized XOR keys",
+        x_end,
+        y_min,
+        y_max,
+        average_level,
+    )?;
+
+    root.present()
+        .map_err(|e| format!("failed to write plot {}: {e}", output_path.display()))?;
+    Ok(())
+}
+
+fn plot_sorted_counts(
+    records: &[KeyEnumeration],
+    m: usize,
+    k: usize,
+    output_path: &Path,
+) -> Result<(), String> {
+    if records.is_empty() {
+        return Err("cannot plot empty key list".to_owned());
+    }
+    let count_len = records[0].counts.len();
+    if count_len == 0 {
+        return Err("cannot plot empty series".to_owned());
+    }
+    let x_end = count_len.saturating_sub(1) as i32;
+    let average_level = k.saturating_sub(m) as f64;
+
+    let mut y_max = average_level;
+    for record in records {
+        for &value in &record.counts {
+            y_max = y_max.max(log4_count(value));
+        }
+    }
+    let y_min = -1.2f64;
+    let y_max = y_max + 0.8;
+
+    let root = BitMapBackend::new(output_path, (1400, 900)).into_drawing_area();
+    root.fill(&WHITE)
+        .map_err(|e| format!("failed to initialize sorted plot background: {e}"))?;
+
+    let mut chart = ChartBuilder::on(&root)
+        .margin(20)
+        .caption(
+            format!("Sorted vigemin counts (m={m}, k={k})"),
+            ("sans-serif", 30),
+        )
+        .x_label_area_size(40)
+        .y_label_area_size(60)
+        .build_cartesian_2d(0..(x_end + 1), y_min..y_max)
+        .map_err(|e| format!("failed to build sorted chart: {e}"))?;
+
+    chart
+        .configure_mesh()
+        .x_desc("sorted minimizer rank")
+        .y_desc("log4(count), with zero shown at -1")
+        .x_labels(8)
+        .y_labels(8)
+        .draw()
+        .map_err(|e| format!("failed to draw sorted chart mesh: {e}"))?;
+
+    let avg_style = ShapeStyle::from(&RED.mix(0.55)).stroke_width(2);
+    let empty_style = ShapeStyle::from(&RED.mix(0.3)).stroke_width(1);
+    chart
+        .draw_series(LineSeries::new(
+            vec![(0, average_level), (x_end, average_level)],
+            avg_style,
+        ))
+        .map_err(|e| format!("failed to draw sorted average line: {e}"))?;
+    chart
+        .draw_series(LineSeries::new(vec![(0, -1.0), (x_end, -1.0)], empty_style))
+        .map_err(|e| format!("failed to draw sorted empty line: {e}"))?;
+
+    for (idx, record) in records.iter().enumerate() {
+        let mut sorted = record.counts.clone();
+        sorted.sort_unstable_by(|a, b| b.cmp(a));
+        let color_idx = idx;
+        chart
+            .draw_series(LineSeries::new(
+                sorted
+                    .iter()
+                    .enumerate()
+                    .map(|(x, &count)| (x as i32, log4_count(count))),
+                &Palette99::pick(color_idx),
+            ))
+            .map_err(|e| format!("failed to draw sorted series {}: {e}", record.key))?
+            .label(format!("gamma={}", record.key))
+            .legend(move |(x, y)| {
+                PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(color_idx))
+            });
+    }
+
+    chart
+        .configure_series_labels()
+        .position(SeriesLabelPosition::UpperRight)
+        .background_style(WHITE.mix(0.8))
+        .border_style(BLACK)
+        .draw()
+        .map_err(|e| format!("failed to draw sorted legend: {e}"))?;
+
+    root.present()
+        .map_err(|e| format!("failed to write plot {}: {e}", output_path.display()))?;
+    Ok(())
+}
+
+fn run_enumerate_keys(
+    m: usize,
+    k: usize,
+    threads: Option<usize>,
+    output_dir: PathBuf,
+    distribution_plots: bool,
+) -> Result<(), String> {
+    if m == 0 {
+        return Err("m must be >= 1".to_owned());
+    }
+    if k < m {
+        return Err(format!("k must be >= m, got k={k}, m={m}"));
+    }
+    if threads == Some(0) {
+        return Err("threads must be >= 1".to_owned());
+    }
+
+    let thread_count = resolve_thread_count(threads);
+    ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .build_global()
+        .map_err(|e| format!("failed to set rayon global thread pool: {e}"))?;
+    eprintln!("threads={thread_count}");
+
+    let keys = generate_script_keys(m);
+    println!("m={m} k={k} keys={}", keys.len());
+    println!("distribution_plots={distribution_plots}");
+
+    let expected_total = (2usize)
+        .checked_mul(k)
+        .and_then(|shift| 1u128.checked_shl(shift as u32));
+    if expected_total.is_none() {
+        eprintln!("expected_total=overflow(u128); sum check disabled");
+    }
+
+    let mut metrics: Vec<KeyRunMetrics> = Vec::with_capacity(keys.len());
+    let mut distribution_records = if distribution_plots {
+        Some(Vec::with_capacity(keys.len()))
+    } else {
+        None
+    };
+    let global_start = Instant::now();
+    for key in keys {
+        let start = Instant::now();
+        let (total_minimizers, non_zero, total_count, counts_opt) = if distribution_plots {
+            let counts = enumerate_vigemin_counts_parallel(m, &key, k)?;
+            let total_minimizers = counts.len() as u64;
+            let total_count: u128 = counts.iter().sum();
+            let non_zero = counts.iter().filter(|&&v| v > 0).count() as u64;
+            (total_minimizers, non_zero, total_count, Some(counts))
+        } else {
+            let stats = enumerate_vigemin_stats_parallel(m, &key, k)?;
+            (
+                stats.total_minimizers,
+                stats.non_zero,
+                stats.sum_counts,
+                None,
+            )
+        };
+        let elapsed = start.elapsed();
+        let elapsed_ms = elapsed.as_millis();
+        let elapsed_s = elapsed.as_secs_f64();
+        let minimizers_per_sec = if elapsed_s > 0.0 {
+            (total_minimizers as f64) / elapsed_s
+        } else {
+            total_minimizers as f64
+        };
+
+        if let Some(expected) = expected_total {
+            if total_count != expected {
+                return Err(format!(
+                    "sum check failed for key {key}: got {total_count}, expected {expected}"
+                ));
+            }
+        }
+
+        println!(
+            "key={key} non_zero={non_zero} sum_counts={total_count} elapsed_ms={elapsed_ms} minimizers_per_sec={minimizers_per_sec:.2}"
+        );
+        metrics.push(KeyRunMetrics {
+            key: key.clone(),
+            minimizers: total_minimizers,
+            non_zero,
+            sum_counts: total_count,
+            elapsed_ms,
+            minimizers_per_sec,
+        });
+
+        if let Some(records) = &mut distribution_records {
+            let counts = counts_opt.ok_or_else(|| {
+                "internal error: distribution counts missing in distribution mode".to_owned()
+            })?;
+            records.push(KeyEnumeration { key, counts });
+        }
+    }
+    println!("elapsed_total_ms={}", global_start.elapsed().as_millis());
+
+    fs::create_dir_all(&output_dir).map_err(|e| {
+        format!(
+            "failed to create output directory {}: {e}",
+            output_dir.display()
+        )
+    })?;
+
+    let throughput_csv = output_dir.join(format!("vigemin_throughput_k={k}_m={m}.csv"));
+    let throughput_plot = output_dir.join(format!("vigemin_throughput_k={k}_m={m}.png"));
+    write_throughput_csv(&throughput_csv, &metrics)?;
+    plot_throughput(&metrics, m, k, &throughput_plot)?;
+    eprintln!("wrote {}", throughput_csv.display());
+    eprintln!("wrote {}", throughput_plot.display());
+
+    if let Some(records) = distribution_records {
+        let unsorted_plot = output_dir.join(format!("vigemin_enumeration_k={k}_m={m}.png"));
+        let sorted_plot = output_dir.join(format!("vigemin_sorted_enumeration_k={k}_m={m}.png"));
+
+        plot_unsorted_panels(&records, m, k, &unsorted_plot)?;
+        plot_sorted_counts(&records, m, k, &sorted_plot)?;
+
+        eprintln!("wrote {}", unsorted_plot.display());
+        eprintln!("wrote {}", sorted_plot.display());
+    }
+
+    Ok(())
+}
+
+fn write_csv(
+    path: PathBuf,
+    counts: &[u128],
+    m: usize,
+    sorted: bool,
+    non_zero_only: bool,
+) -> Result<(), String> {
+    let file = File::create(&path)
+        .map_err(|e| format!("failed to create output file {}: {e}", path.display()))?;
+    let mut writer = BufWriter::new(file);
+    writer
+        .write_all(b"minimizer,count\n")
+        .map_err(|e| format!("failed to write CSV header: {e}"))?;
+
+    if sorted {
+        let mut pairs: Vec<(u64, u128)> = counts
+            .iter()
+            .enumerate()
+            .map(|(idx, &count)| (idx as u64, count))
+            .collect();
+        pairs.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        for (idx, count) in pairs {
+            if non_zero_only && count == 0 {
+                continue;
+            }
+            let minimizer = format_dna_word(&decode_index_to_kmer(idx, m));
+            writeln!(writer, "{minimizer},{count}")
+                .map_err(|e| format!("failed to write CSV row: {e}"))?;
+        }
+    } else {
+        for (idx, &count) in counts.iter().enumerate() {
+            if non_zero_only && count == 0 {
+                continue;
+            }
+            let minimizer = format_dna_word(&decode_index_to_kmer(idx as u64, m));
+            writeln!(writer, "{minimizer},{count}")
+                .map_err(|e| format!("failed to write CSV row: {e}"))?;
+        }
+    }
+
+    writer
+        .flush()
+        .map_err(|e| format!("failed to flush output {}: {e}", path.display()))?;
+    eprintln!("wrote {}", path.display());
+    Ok(())
+}

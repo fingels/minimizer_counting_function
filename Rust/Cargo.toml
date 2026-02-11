@@ -1,0 +1,18 @@
+[package]
+name = "minimizer_vigemin_rust"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5.30", features = ["derive"] }
+plotters = { version = "0.3.7", default-features = true, features = ["bitmap_backend"] }
+rand = "0.8.5"
+rayon = "1.10.0"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+incremental = false
