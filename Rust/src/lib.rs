@@ -1,7 +1,10 @@
 pub mod dna;
 pub mod vigemin;
 
-use crate::dna::{decode_index_to_kmer, parse_dna_word, total_kmers};
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+use crate::dna::{decode_index_to_kmer_inplace, parse_dna_word, total_kmers};
 use crate::vigemin::VigeminCountingFunction;
 use rayon::prelude::*;
 
@@ -32,11 +35,15 @@ pub fn enumerate_vigemin_counts_parallel(
     let total = total_kmers(m)?;
     let counts = (0..total)
         .into_par_iter()
-        .map(|idx| {
-            let minimizer_codes = decode_index_to_kmer(idx, m);
-            let counter = VigeminCountingFunction::from_codes_unchecked(&minimizer_codes, &key_codes);
-            counter.kmer_count_unchecked(k)
-        })
+        .map_init(
+            || vec![0u8; m],
+            |minimizer_codes, idx| {
+                decode_index_to_kmer_inplace(idx, minimizer_codes);
+                let counter =
+                    VigeminCountingFunction::from_codes_unchecked(minimizer_codes, &key_codes);
+                counter.kmer_count_unchecked(k)
+            },
+        )
         .collect::<Vec<_>>();
 
     Ok(counts)
@@ -62,11 +69,15 @@ pub fn enumerate_vigemin_stats_parallel(
     let total = total_kmers(m)?;
     let (sum_counts, non_zero) = (0..total)
         .into_par_iter()
-        .map(|idx| {
-            let minimizer_codes = decode_index_to_kmer(idx, m);
-            let counter = VigeminCountingFunction::from_codes_unchecked(&minimizer_codes, &key_codes);
-            counter.kmer_count_unchecked(k)
-        })
+        .map_init(
+            || vec![0u8; m],
+            |minimizer_codes, idx| {
+                decode_index_to_kmer_inplace(idx, minimizer_codes);
+                let counter =
+                    VigeminCountingFunction::from_codes_unchecked(minimizer_codes, &key_codes);
+                counter.kmer_count_unchecked(k)
+            },
+        )
         .fold(
             || (0u128, 0u64),
             |(sum, nz), count| (sum + count, nz + u64::from(count > 0)),

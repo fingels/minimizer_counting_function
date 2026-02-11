@@ -82,6 +82,14 @@ pub fn decode_index_to_kmer(mut index: u64, m: usize) -> Vec<u8> {
     out
 }
 
+#[inline]
+pub fn decode_index_to_kmer_inplace(mut index: u64, out: &mut [u8]) {
+    for i in (0..out.len()).rev() {
+        out[i] = (index & 0b11) as u8;
+        index >>= 2;
+    }
+}
+
 pub fn total_kmers(m: usize) -> Result<u64, String> {
     if m > 31 {
         return Err(

@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 clap = { version = "4.5.30", features = ["derive"] }
+mimalloc = "0.1.48"
 plotters = { version = "0.3.7", default-features = true, features = ["bitmap_backend"] }
 rand = "0.8.5"
 rayon = "1.10.0"
