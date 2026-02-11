@@ -16,7 +16,7 @@ pub struct VigeminCountingFunction {
     antemer_max_prefix_size: usize,
     postmer_max_size: usize,
     prefix_letters_vectors: Vec<[usize; DNA_ALPHABET_SIZE]>,
-    autocorrelation_matrix: Vec<Vec<CmpTag>>,
+    autocorrelation_matrix: Vec<CmpTag>,
     suffix_key_convolution: Vec<bool>,
     antemer_alphabet_zero: Vec<u8>,
     antemer_alphabet_not_zero: Vec<u8>,
@@ -30,10 +30,10 @@ impl VigeminCountingFunction {
     pub fn new(minimizer: &str, key: &str) -> Result<Self, String> {
         let minimizer_codes = parse_dna_word(minimizer)?;
         let key_codes = parse_dna_word(key)?;
-        Self::from_codes(minimizer_codes, &key_codes)
+        Self::from_codes(&minimizer_codes, &key_codes)
     }
 
-    pub fn from_codes(minimizer: Vec<u8>, key: &[u8]) -> Result<Self, String> {
+    pub fn from_codes(minimizer: &[u8], key: &[u8]) -> Result<Self, String> {
         if minimizer.is_empty() {
             return Err("minimizer cannot be empty".to_string());
         }
@@ -45,6 +45,14 @@ impl VigeminCountingFunction {
             ));
         }
 
+        Ok(Self::from_codes_unchecked(minimizer, key))
+    }
+
+    #[inline]
+    pub fn from_codes_unchecked(minimizer: &[u8], key: &[u8]) -> Self {
+        debug_assert!(!minimizer.is_empty());
+        debug_assert_eq!(minimizer.len(), key.len());
+
         let length = minimizer.len();
         let inf = usize::MAX / 4;
 
@@ -52,7 +60,7 @@ impl VigeminCountingFunction {
         let mut postmer_max_size = usize::MAX;
 
         let mut prefix_letters_vectors = vec![[inf; DNA_ALPHABET_SIZE]; length + 1];
-        let mut autocorrelation_matrix = vec![vec![CmpTag::Eq; length]; length];
+        let mut autocorrelation_matrix = vec![CmpTag::Eq; length * length];
 
         let mut alphabet_i = vec![0u8; length + 1];
         for i in 0..length {
@@ -97,7 +105,7 @@ impl VigeminCountingFunction {
                         }
                     }
                 }
-                autocorrelation_matrix[i][j] = symb;
+                autocorrelation_matrix[i * length + j] = symb;
             }
 
             for a in 0..DNA_ALPHABET_SIZE {
@@ -120,7 +128,7 @@ impl VigeminCountingFunction {
             let mut correct_alphabet = alphabet_i[i] & (alphabet_i[0] | dna_mask(minimizer[0]));
 
             for j in 1..i {
-                if autocorrelation_matrix[i - 1][j] == CmpTag::Eq {
+                if autocorrelation_matrix[(i - 1) * length + j] == CmpTag::Eq {
                     correct_alphabet &= alphabet_i[i - j] | dna_mask(minimizer[i - j]);
                 }
             }
@@ -160,14 +168,14 @@ impl VigeminCountingFunction {
 
             postmer_high_values_alphabet[i].push((i, alphabet_i[0] | dna_mask(minimizer[0])));
             for k in 1..i {
-                if autocorrelation_matrix[i - 1][k] == CmpTag::Eq {
+                if autocorrelation_matrix[(i - 1) * length + k] == CmpTag::Eq {
                     postmer_high_values_alphabet[i]
                         .push((k, alphabet_i[i - k] | dna_mask(minimizer[i - k])));
                 }
             }
         }
 
-        Ok(Self {
+        Self {
             length,
             antemer_max_prefix_size,
             postmer_max_size,
@@ -180,13 +188,20 @@ impl VigeminCountingFunction {
             postmer_small_values_alphabet_not_zero,
             postmer_high_values_alphabet,
             alphabet_i,
-        })
+        }
     }
 
     pub fn kmer_count(&self, k: usize) -> Result<u128, String> {
         if k < self.length {
             return Err("k must be larger or equal to the length of the minimizer".to_string());
         }
+
+        Ok(self.kmer_count_unchecked(k))
+    }
+
+    #[inline]
+    pub fn kmer_count_unchecked(&self, k: usize) -> u128 {
+        debug_assert!(k >= self.length);
 
         let beta_limit = self.postmer_max_size.saturating_sub(2);
         let beta_max = beta_limit.min(k - self.length);
@@ -198,7 +213,7 @@ impl VigeminCountingFunction {
         for beta in 0..=beta_max {
             total += antemer_array[k - self.length - beta] * postmer_array[beta + self.length];
         }
-        Ok(total)
+        total
     }
 
     pub fn kmer_counts_up_to(&self, k: usize) -> Result<Vec<u128>, String> {
@@ -239,11 +254,13 @@ impl VigeminCountingFunction {
                 } else if i == 0 {
                     dna_mask_len(self.alphabet_i[0]) as u128 * array[j - 1]
                 } else if i == j {
-                    let mut prod = 1u128;
-                    for l in 0..i {
-                        let cond = self.autocorrelation_matrix[i - 1][l] == CmpTag::Gt
-                            || (self.autocorrelation_matrix[i - 1][l] == CmpTag::Eq
-                                && self.suffix_key_convolution[i - 1 - l]);
+                        let mut prod = 1u128;
+                        for l in 0..i {
+                            let cond = self.autocorrelation_matrix[(i - 1) * self.length + l]
+                                == CmpTag::Gt
+                                || (self.autocorrelation_matrix[(i - 1) * self.length + l]
+                                    == CmpTag::Eq
+                                    && self.suffix_key_convolution[i - 1 - l]);
                         if !cond {
                             prod = 0;
                             break;

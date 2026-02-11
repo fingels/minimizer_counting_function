@@ -34,11 +34,8 @@ pub fn enumerate_vigemin_counts_parallel(
         .into_par_iter()
         .map(|idx| {
             let minimizer_codes = decode_index_to_kmer(idx, m);
-            let counter = VigeminCountingFunction::from_codes(minimizer_codes, &key_codes)
-                .expect("valid enumerated DNA minimizer");
-            counter
-                .kmer_count(k)
-                .expect("k is validated to be >= minimizer length")
+            let counter = VigeminCountingFunction::from_codes_unchecked(&minimizer_codes, &key_codes);
+            counter.kmer_count_unchecked(k)
         })
         .collect::<Vec<_>>();
 
@@ -67,11 +64,8 @@ pub fn enumerate_vigemin_stats_parallel(
         .into_par_iter()
         .map(|idx| {
             let minimizer_codes = decode_index_to_kmer(idx, m);
-            let counter = VigeminCountingFunction::from_codes(minimizer_codes, &key_codes)
-                .expect("valid enumerated DNA minimizer");
-            counter
-                .kmer_count(k)
-                .expect("k is validated to be >= minimizer length")
+            let counter = VigeminCountingFunction::from_codes_unchecked(&minimizer_codes, &key_codes);
+            counter.kmer_count_unchecked(k)
         })
         .fold(
             || (0u128, 0u64),
