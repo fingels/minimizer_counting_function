@@ -127,3 +127,45 @@ Optional controls:
 - `--threads N` to pin Rayon threads (used by oracle precompute path)
 - `--seed S` for deterministic random key generation (and deterministic random sequence if `--fasta` is not used)
   If `--seed` is omitted, a random seed is generated and printed.
+
+## Benchmark Binaries
+
+### `vigemin_enumerate_keys_benchmark`
+
+Runs the `vigemers_enumeration.py`-style benchmark (multi-key throughput + optional distribution plots).
+
+```bash
+cargo run --release --bin vigemin_enumerate_keys_benchmark -- --m 10 --k 31 --output-dir ../Figures_theory
+```
+
+Options:
+
+- `--m <usize>` default: `10`
+- `--k <usize>` default: `31`
+- `--threads <usize>` default: all available threads
+- `--output-dir <path>` default: `../Figures_theory`
+- `--distribution-plots` default: off
+
+### `pikmin_benchmark`
+
+Runs the optimized Rust version of `scripts/pikmin_benchmark.py`.
+
+```bash
+cargo run --release --bin pikmin_benchmark -- --k 31 --m 6 --n-keys 8 --seq-size 100000
+```
+
+FASTA mode:
+
+```bash
+cargo run --release --bin pikmin_benchmark -- --k 31 --m 6 --n-keys 8 --fasta /path/to/input.fa
+```
+
+Options:
+
+- `--k <usize>` default: `31`
+- `--m <usize>` default: `6`
+- `--n-keys <usize>` default: `8`
+- `--seq-size <usize>` default: `100000` (used only when `--fasta` is not provided)
+- `--fasta <path>` optional; if set, input sequence is read from FASTA
+- `--threads <usize>` default: all available threads
+- `--seed <u64>` optional; if omitted, a random seed is generated and printed

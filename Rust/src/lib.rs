@@ -4,9 +4,13 @@ pub mod vigemin;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use crate::dna::{decode_index_to_kmer_inplace, parse_dna_word, total_kmers};
-use crate::vigemin::VigeminCountingFunction;
+use crate::dna::{
+    decode_index_to_kmer_inplace, increment_kmer_inplace, parse_dna_word, total_kmers,
+};
+use crate::vigemin::{KmerCountScratch, VigeminCountingFunction};
 use rayon::prelude::*;
+
+const ENUM_CHUNK_SIZE: usize = 1usize << 14;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnumerationStats {
@@ -33,18 +37,31 @@ pub fn enumerate_vigemin_counts_parallel(
     }
 
     let total = total_kmers(m)?;
-    let counts = (0..total)
-        .into_par_iter()
-        .map_init(
-            || vec![0u8; m],
-            |minimizer_codes, idx| {
-                decode_index_to_kmer_inplace(idx, minimizer_codes);
-                let counter =
-                    VigeminCountingFunction::from_codes_unchecked(minimizer_codes, &key_codes);
-                counter.kmer_count_unchecked(k)
-            },
-        )
-        .collect::<Vec<_>>();
+    let total_usize = usize::try_from(total)
+        .map_err(|_| format!("4^m={total} does not fit in usize on this platform"))?;
+    let mut counts = vec![0u128; total_usize];
+    let chunk_size = ENUM_CHUNK_SIZE;
+
+    counts.par_chunks_mut(chunk_size).enumerate().for_each_init(
+        || {
+            let minimizer_codes = vec![0u8; m];
+            let counter =
+                VigeminCountingFunction::from_codes_unchecked(&minimizer_codes, &key_codes);
+            let scratch = KmerCountScratch::default();
+            (minimizer_codes, counter, scratch)
+        },
+        |(minimizer_codes, counter, scratch), (chunk_idx, chunk)| {
+            let start_idx = (chunk_idx * chunk_size) as u64;
+            decode_index_to_kmer_inplace(start_idx, minimizer_codes);
+            for (offset, slot) in chunk.iter_mut().enumerate() {
+                if offset != 0 {
+                    increment_kmer_inplace(minimizer_codes);
+                }
+                counter.reset_from_codes_unchecked(minimizer_codes, &key_codes);
+                *slot = counter.kmer_count_unchecked_with_scratch(k, scratch);
+            }
+        },
+    );
 
     Ok(counts)
 }
@@ -67,20 +84,39 @@ pub fn enumerate_vigemin_stats_parallel(
     }
 
     let total = total_kmers(m)?;
-    let (sum_counts, non_zero) = (0..total)
+    let total_usize = usize::try_from(total)
+        .map_err(|_| format!("4^m={total} does not fit in usize on this platform"))?;
+    let chunk_size = ENUM_CHUNK_SIZE;
+    let chunk_count = total_usize.div_ceil(chunk_size);
+
+    let (sum_counts, non_zero) = (0..chunk_count)
         .into_par_iter()
         .map_init(
-            || vec![0u8; m],
-            |minimizer_codes, idx| {
-                decode_index_to_kmer_inplace(idx, minimizer_codes);
+            || {
+                let minimizer_codes = vec![0u8; m];
                 let counter =
-                    VigeminCountingFunction::from_codes_unchecked(minimizer_codes, &key_codes);
-                counter.kmer_count_unchecked(k)
+                    VigeminCountingFunction::from_codes_unchecked(&minimizer_codes, &key_codes);
+                let scratch = KmerCountScratch::default();
+                (minimizer_codes, counter, scratch)
             },
-        )
-        .fold(
-            || (0u128, 0u64),
-            |(sum, nz), count| (sum + count, nz + u64::from(count > 0)),
+            |(minimizer_codes, counter, scratch), chunk_idx| {
+                let start_idx = chunk_idx * chunk_size;
+                let chunk_len = (total_usize - start_idx).min(chunk_size);
+                decode_index_to_kmer_inplace(start_idx as u64, minimizer_codes);
+
+                let mut local_sum = 0u128;
+                let mut local_non_zero = 0u64;
+                for offset in 0..chunk_len {
+                    if offset != 0 {
+                        increment_kmer_inplace(minimizer_codes);
+                    }
+                    counter.reset_from_codes_unchecked(minimizer_codes, &key_codes);
+                    let count = counter.kmer_count_unchecked_with_scratch(k, scratch);
+                    local_sum += count;
+                    local_non_zero += u64::from(count > 0);
+                }
+                (local_sum, local_non_zero)
+            },
         )
         .reduce(
             || (0u128, 0u64),

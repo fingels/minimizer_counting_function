@@ -1,13 +1,21 @@
 use crate::dna::{
     ALL_DNA_MASK, DNA_ALPHABET_SIZE, dna_mask, dna_mask_len, lex_rank, parse_dna_word, xor_symbol,
 };
-use std::cmp::Ordering;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum CmpTag {
     Eq,
     Lt,
     Gt,
+}
+
+#[derive(Default, Clone)]
+pub struct KmerCountScratch {
+    antemer_prefix: Vec<u128>,
+    antemer_array: Vec<u128>,
+    postmer_prefix: Vec<u128>,
+    postmer_array: Vec<u128>,
+    postmer_values: Vec<u128>,
 }
 
 #[derive(Clone)]
@@ -44,7 +52,6 @@ impl VigeminCountingFunction {
                 minimizer.len()
             ));
         }
-
         Ok(Self::from_codes_unchecked(minimizer, key))
     }
 
@@ -85,24 +92,22 @@ impl VigeminCountingFunction {
 
             for i in j..length {
                 if !flag {
-                    let cmp = compare_xored_substrings(&minimizer, key, j, 0, i - j + 1);
-                    match cmp {
-                        Ordering::Equal => {
-                            symb = CmpTag::Eq;
-                            let letter = minimizer[i - j + 1] as usize;
-                            prefix_letters_vectors[i + 1][letter] =
-                                prefix_letters_vectors[i + 1][letter].min(j + 1);
-                        }
-                        Ordering::Less => {
-                            symb = CmpTag::Lt;
-                            flag = true;
-                            antemer_max_prefix_size = antemer_max_prefix_size.min(i + 1);
-                            postmer_max_size = postmer_max_size.min(j + 1);
-                        }
-                        Ordering::Greater => {
-                            symb = CmpTag::Gt;
-                            flag = true;
-                        }
+                    let t = i - j;
+                    let left = minimizer[i] ^ key[t];
+                    let right = minimizer[t] ^ key[t];
+                    if left < right {
+                        symb = CmpTag::Lt;
+                        flag = true;
+                        antemer_max_prefix_size = antemer_max_prefix_size.min(i + 1);
+                        postmer_max_size = postmer_max_size.min(j + 1);
+                    } else if left > right {
+                        symb = CmpTag::Gt;
+                        flag = true;
+                    } else {
+                        symb = CmpTag::Eq;
+                        let letter = minimizer[t + 1] as usize;
+                        prefix_letters_vectors[i + 1][letter] =
+                            prefix_letters_vectors[i + 1][letter].min(j + 1);
                     }
                 }
                 autocorrelation_matrix[i * length + j] = symb;
@@ -191,6 +196,140 @@ impl VigeminCountingFunction {
         }
     }
 
+    #[inline]
+    pub fn reset_from_codes_unchecked(&mut self, minimizer: &[u8], key: &[u8]) {
+        debug_assert!(!minimizer.is_empty());
+        debug_assert_eq!(minimizer.len(), key.len());
+
+        if self.length != minimizer.len() {
+            *self = Self::from_codes_unchecked(minimizer, key);
+            return;
+        }
+
+        let length = self.length;
+        let inf = usize::MAX / 4;
+
+        self.antemer_max_prefix_size = length;
+        self.postmer_max_size = usize::MAX;
+        self.prefix_letters_vectors.fill([inf; DNA_ALPHABET_SIZE]);
+        self.autocorrelation_matrix.fill(CmpTag::Eq);
+        self.antemer_alphabet_zero.fill(0);
+        self.antemer_alphabet_not_zero.fill(0);
+        self.postmer_small_values_alphabet_zero.fill(0);
+        self.postmer_small_values_alphabet_not_zero.fill(0);
+        self.alphabet_i.fill(0);
+        for values in &mut self.postmer_high_values_alphabet {
+            values.clear();
+        }
+
+        for i in 0..length {
+            let ref_xor = minimizer[i] ^ key[i];
+            let mut mask = 0u8;
+            for a in 0..DNA_ALPHABET_SIZE {
+                let cand = (a as u8) ^ key[i];
+                if cand > ref_xor {
+                    mask |= dna_mask(a as u8);
+                }
+            }
+            self.alphabet_i[i] = mask;
+        }
+        self.alphabet_i[length] = ALL_DNA_MASK;
+
+        self.prefix_letters_vectors[1] = [0; DNA_ALPHABET_SIZE];
+        self.prefix_letters_vectors[1][minimizer[0] as usize] = 2;
+
+        for j in 1..length {
+            let mut flag = false;
+            let mut symb = CmpTag::Eq;
+
+            for i in j..length {
+                if !flag {
+                    let t = i - j;
+                    let left = minimizer[i] ^ key[t];
+                    let right = minimizer[t] ^ key[t];
+                    if left < right {
+                        symb = CmpTag::Lt;
+                        flag = true;
+                        self.antemer_max_prefix_size = self.antemer_max_prefix_size.min(i + 1);
+                        self.postmer_max_size = self.postmer_max_size.min(j + 1);
+                    } else if left > right {
+                        symb = CmpTag::Gt;
+                        flag = true;
+                    } else {
+                        symb = CmpTag::Eq;
+                        let letter = minimizer[t + 1] as usize;
+                        self.prefix_letters_vectors[i + 1][letter] =
+                            self.prefix_letters_vectors[i + 1][letter].min(j + 1);
+                    }
+                }
+                self.autocorrelation_matrix[i * length + j] = symb;
+            }
+
+            for a in 0..DNA_ALPHABET_SIZE {
+                if self.prefix_letters_vectors[j + 1][a] == inf {
+                    self.prefix_letters_vectors[j + 1][a] =
+                        if (a as u8) == minimizer[0] { j + 2 } else { 0 };
+                }
+            }
+        }
+
+        self.suffix_key_convolution
+            .resize(self.antemer_max_prefix_size, false);
+        self.suffix_key_convolution[..self.antemer_max_prefix_size].fill(false);
+        for i in 0..self.antemer_max_prefix_size {
+            self.suffix_key_convolution[i] = suffix_key_convolution_gt(minimizer, key, i);
+        }
+
+        for i in 1..length {
+            let mut correct_alphabet =
+                self.alphabet_i[i] & (self.alphabet_i[0] | dna_mask(minimizer[0]));
+
+            for j in 1..i {
+                if self.autocorrelation_matrix[(i - 1) * length + j] == CmpTag::Eq {
+                    correct_alphabet &= self.alphabet_i[i - j] | dna_mask(minimizer[i - j]);
+                }
+            }
+
+            for a in 0..DNA_ALPHABET_SIZE {
+                let bit = dna_mask(a as u8);
+                if correct_alphabet & bit == 0 {
+                    continue;
+                }
+                if self.prefix_letters_vectors[i][a] == 0 {
+                    self.antemer_alphabet_zero[i] |= bit;
+                } else {
+                    self.antemer_alphabet_not_zero[i] |= bit;
+                }
+            }
+        }
+
+        for i in 1..=length {
+            for a in 0..DNA_ALPHABET_SIZE {
+                let bit = dna_mask(a as u8);
+                if self.prefix_letters_vectors[i][a] == 0 {
+                    self.postmer_small_values_alphabet_zero[i] |= bit;
+                } else {
+                    self.postmer_small_values_alphabet_not_zero[i] |= bit;
+                }
+            }
+
+            if i < length {
+                let minimizer_bit = dna_mask(minimizer[i]);
+                self.postmer_small_values_alphabet_zero[i] &= !minimizer_bit;
+                self.postmer_small_values_alphabet_not_zero[i] &= !minimizer_bit;
+            }
+
+            self.postmer_high_values_alphabet[i]
+                .push((i, self.alphabet_i[0] | dna_mask(minimizer[0])));
+            for k in 1..i {
+                if self.autocorrelation_matrix[(i - 1) * length + k] == CmpTag::Eq {
+                    self.postmer_high_values_alphabet[i]
+                        .push((k, self.alphabet_i[i - k] | dna_mask(minimizer[i - k])));
+                }
+            }
+        }
+    }
+
     pub fn kmer_count(&self, k: usize) -> Result<u128, String> {
         if k < self.length {
             return Err("k must be larger or equal to the length of the minimizer".to_string());
@@ -201,17 +340,31 @@ impl VigeminCountingFunction {
 
     #[inline]
     pub fn kmer_count_unchecked(&self, k: usize) -> u128 {
+        let mut scratch = KmerCountScratch::default();
+        self.kmer_count_unchecked_with_scratch(k, &mut scratch)
+    }
+
+    #[inline]
+    pub fn kmer_count_unchecked_with_scratch(
+        &self,
+        k: usize,
+        scratch: &mut KmerCountScratch,
+    ) -> u128 {
         debug_assert!(k >= self.length);
 
+        let alpha = k - self.length;
         let beta_limit = self.postmer_max_size.saturating_sub(2);
-        let beta_max = beta_limit.min(k - self.length);
+        let beta_max = beta_limit.min(alpha);
 
-        let antemer_array = self.antemer(k - self.length);
-        let postmer_array = self.postmer(beta_max + self.length);
+        self.antemer_with_scratch(alpha, scratch);
+        self.postmer_with_scratch(beta_max + self.length, scratch);
+
+        let antemer_array = &scratch.antemer_array[..(alpha + 1)];
+        let postmer_array = &scratch.postmer_values[..(beta_max + self.length + 1)];
 
         let mut total = 0u128;
         for beta in 0..=beta_max {
-            total += antemer_array[k - self.length - beta] * postmer_array[beta + self.length];
+            total += antemer_array[alpha - beta] * postmer_array[beta + self.length];
         }
         total
     }
@@ -239,10 +392,17 @@ impl VigeminCountingFunction {
     }
 
     fn antemer(&self, alpha: usize) -> Vec<u128> {
+        let mut scratch = KmerCountScratch::default();
+        self.antemer_with_scratch(alpha, &mut scratch);
+        scratch.antemer_array[..(alpha + 1)].to_vec()
+    }
+
+    fn antemer_with_scratch(&self, alpha: usize, scratch: &mut KmerCountScratch) {
         let cols = alpha + 1;
         let rows = self.antemer_max_prefix_size;
-        let mut array_prefix = vec![0u128; rows * cols];
-        let mut array = vec![0u128; cols];
+        prepare_antemer_scratch(scratch, rows, cols);
+        let array_prefix = &mut scratch.antemer_prefix[..(rows * cols)];
+        let array = &mut scratch.antemer_array[..cols];
 
         for j in 0..=alpha {
             let mut column_sum = 0u128;
@@ -254,13 +414,13 @@ impl VigeminCountingFunction {
                 } else if i == 0 {
                     dna_mask_len(self.alphabet_i[0]) as u128 * array[j - 1]
                 } else if i == j {
-                        let mut prod = 1u128;
-                        for l in 0..i {
-                            let cond = self.autocorrelation_matrix[(i - 1) * self.length + l]
-                                == CmpTag::Gt
-                                || (self.autocorrelation_matrix[(i - 1) * self.length + l]
-                                    == CmpTag::Eq
-                                    && self.suffix_key_convolution[i - 1 - l]);
+                    let mut prod = 1u128;
+                    for l in 0..i {
+                        let cond = self.autocorrelation_matrix[(i - 1) * self.length + l]
+                            == CmpTag::Gt
+                            || (self.autocorrelation_matrix[(i - 1) * self.length + l]
+                                == CmpTag::Eq
+                                && self.suffix_key_convolution[i - 1 - l]);
                         if !cond {
                             prod = 0;
                             break;
@@ -292,16 +452,21 @@ impl VigeminCountingFunction {
             }
             array[j] = column_sum;
         }
-
-        array
     }
 
     fn postmer(&self, beta: usize) -> Vec<u128> {
+        let mut scratch = KmerCountScratch::default();
+        self.postmer_with_scratch(beta, &mut scratch);
+        scratch.postmer_values[..(beta + 1)].to_vec()
+    }
+
+    fn postmer_with_scratch(&self, beta: usize, scratch: &mut KmerCountScratch) {
         let cols = beta + 1;
         let rows = self.length + 1;
-        let mut array_prefix = vec![0u128; rows * cols];
-        let mut array = vec![0u128; cols];
-        let mut postmer_values = vec![0u128; cols];
+        prepare_postmer_scratch(scratch, rows, cols);
+        let array_prefix = &mut scratch.postmer_prefix[..(rows * cols)];
+        let array = &mut scratch.postmer_array[..cols];
+        let postmer_values = &mut scratch.postmer_values[..cols];
 
         for j in 0..=beta {
             let mut column_sum = 0u128;
@@ -392,8 +557,6 @@ impl VigeminCountingFunction {
             array[j] = column_sum;
             postmer_values[j] = array_prefix[self.length * cols + j];
         }
-
-        postmer_values
     }
 
     pub fn minimizer_len(&self) -> usize {
@@ -402,24 +565,33 @@ impl VigeminCountingFunction {
 }
 
 #[inline]
-fn compare_xored_substrings(
-    minimizer: &[u8],
-    key: &[u8],
-    start_left: usize,
-    start_right: usize,
-    len: usize,
-) -> Ordering {
-    for t in 0..len {
-        let left = minimizer[start_left + t] ^ key[t];
-        let right = minimizer[start_right + t] ^ key[t];
-        if left < right {
-            return Ordering::Less;
-        }
-        if left > right {
-            return Ordering::Greater;
-        }
+fn prepare_antemer_scratch(scratch: &mut KmerCountScratch, rows: usize, cols: usize) {
+    let prefix_len = rows * cols;
+    if scratch.antemer_prefix.len() < prefix_len {
+        scratch.antemer_prefix.resize(prefix_len, 0);
     }
-    Ordering::Equal
+    scratch.antemer_prefix[..prefix_len].fill(0);
+    if scratch.antemer_array.len() < cols {
+        scratch.antemer_array.resize(cols, 0);
+    }
+    scratch.antemer_array[..cols].fill(0);
+}
+
+#[inline]
+fn prepare_postmer_scratch(scratch: &mut KmerCountScratch, rows: usize, cols: usize) {
+    let prefix_len = rows * cols;
+    if scratch.postmer_prefix.len() < prefix_len {
+        scratch.postmer_prefix.resize(prefix_len, 0);
+    }
+    scratch.postmer_prefix[..prefix_len].fill(0);
+    if scratch.postmer_array.len() < cols {
+        scratch.postmer_array.resize(cols, 0);
+    }
+    scratch.postmer_array[..cols].fill(0);
+    if scratch.postmer_values.len() < cols {
+        scratch.postmer_values.resize(cols, 0);
+    }
+    scratch.postmer_values[..cols].fill(0);
 }
 
 #[inline]

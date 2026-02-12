@@ -90,6 +90,17 @@ pub fn decode_index_to_kmer_inplace(mut index: u64, out: &mut [u8]) {
     }
 }
 
+#[inline]
+pub fn increment_kmer_inplace(out: &mut [u8]) {
+    for i in (0..out.len()).rev() {
+        if out[i] < T {
+            out[i] += 1;
+            return;
+        }
+        out[i] = A;
+    }
+}
+
 pub fn total_kmers(m: usize) -> Result<u64, String> {
     if m > 31 {
         return Err(
