@@ -126,3 +126,4 @@ Optional controls:
 
 - `--threads N` to pin Rayon threads (used by oracle precompute path)
 - `--seed S` for deterministic random key generation (and deterministic random sequence if `--fasta` is not used)
+  If `--seed` is omitted, a random seed is generated and printed.

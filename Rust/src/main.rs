@@ -9,6 +9,7 @@ use plotters::prelude::*;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use rayon::ThreadPoolBuilder;
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -167,6 +168,13 @@ impl PositionBitSet {
     #[inline]
     fn len(&self) -> usize {
         self.unique_count
+    }
+
+    #[inline]
+    fn contains(&self, position: usize) -> bool {
+        let word_idx = position >> 6;
+        let mask = 1u64 << (position & 63);
+        (self.bits[word_idx] & mask) != 0
     }
 }
 
@@ -391,6 +399,400 @@ fn load_fasta_sequence_codes(path: &Path) -> Result<Vec<u8>, String> {
     Ok(sequence)
 }
 
+#[derive(Clone)]
+struct MinQueue {
+    positions: Vec<usize>,
+    values: Vec<u64>,
+    head: usize,
+    tail: usize,
+    cap: usize,
+}
+
+impl MinQueue {
+    fn with_window(window_span: usize) -> Self {
+        let cap = window_span + 1;
+        Self {
+            positions: vec![0usize; cap],
+            values: vec![0u64; cap],
+            head: 0,
+            tail: 0,
+            cap,
+        }
+    }
+
+    #[inline]
+    fn push(&mut self, pos: usize, value: u64) {
+        while self.head != self.tail {
+            let last = (self.tail + self.cap - 1) % self.cap;
+            if self.values[last] > value {
+                self.tail = last;
+            } else {
+                break;
+            }
+        }
+        self.positions[self.tail] = pos;
+        self.values[self.tail] = value;
+        self.tail = (self.tail + 1) % self.cap;
+    }
+
+    #[inline]
+    fn pop_expired(&mut self, min_pos: usize) {
+        while self.head != self.tail && self.positions[self.head] < min_pos {
+            self.head = (self.head + 1) % self.cap;
+        }
+    }
+
+    #[inline]
+    fn front(&self) -> (usize, u64) {
+        (self.positions[self.head], self.values[self.head])
+    }
+}
+
+struct DenseChunkResult {
+    idx: usize,
+    key_counts: Vec<u64>,
+    heuristic_counts: Vec<u64>,
+    heuristic_duplicated_counts: Vec<u64>,
+    key_unique_counts: Vec<u64>,
+    key_low_masks: Vec<Vec<u64>>,
+    key_high_masks: Vec<Vec<u64>>,
+    heuristic_unique_count: u64,
+    heuristic_low_mask: Vec<u64>,
+    heuristic_high_mask: Vec<u64>,
+}
+
+#[inline]
+fn choose_chunk_windows(window_count: usize, thread_count: usize) -> usize {
+    let target_chunks = thread_count.saturating_mul(8).max(1);
+    let base = window_count.div_ceil(target_chunks);
+    base.max(500_000)
+}
+
+#[inline]
+fn extract_range_mask(bits: &PositionBitSet, start: usize, len: usize) -> Vec<u64> {
+    if len == 0 {
+        return Vec::new();
+    }
+    let mut out = vec![0u64; len.div_ceil(64)];
+    for offset in 0..len {
+        if bits.contains(start + offset) {
+            out[offset >> 6] |= 1u64 << (offset & 63);
+        }
+    }
+    out
+}
+
+#[inline]
+fn mask_intersection_popcount(left: &[u64], right: &[u64]) -> u64 {
+    left.iter()
+        .zip(right.iter())
+        .map(|(a, b)| u64::from((a & b).count_ones()))
+        .sum()
+}
+
+#[inline]
+fn splitmix64(mut value: u64) -> u64 {
+    value = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    value ^ (value >> 31)
+}
+
+#[inline]
+fn random_base_at(seed: u64, index: usize) -> u8 {
+    (splitmix64(seed.wrapping_add(index as u64)) & 0b11) as u8
+}
+
+fn process_dense_chunk_from_sequence(
+    idx: usize,
+    start_window: usize,
+    end_window: usize,
+    sequence: &[u8],
+    k: usize,
+    m: usize,
+    key_packed_codes: &[u64],
+    oracle_dense: &[Vec<u128>],
+    total_minimizers: usize,
+) -> DenseChunkResult {
+    let key_count = key_packed_codes.len();
+    let overlap = k - m;
+    let window_span = overlap + 1;
+    let chunk_windows = end_window - start_window;
+    let local_pos_len = chunk_windows + overlap;
+
+    let mut key_counts = vec![0u64; key_count * total_minimizers];
+    let mut heuristic_counts = vec![0u64; total_minimizers];
+    let mut heuristic_duplicated_counts = vec![0u64; key_count * total_minimizers];
+
+    let mut key_position_sets: Vec<PositionBitSet> = (0..key_count)
+        .map(|_| PositionBitSet::new(local_pos_len))
+        .collect();
+    let mut heuristic_position_set = PositionBitSet::new(local_pos_len);
+
+    let mut queues: Vec<MinQueue> = (0..key_count)
+        .map(|_| MinQueue::with_window(window_span))
+        .collect();
+
+    let rolling_mask = if 2 * m >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << (2 * m)) - 1
+    };
+
+    let mut mmer_code = encode_dna_slice(&sequence[start_window..(start_window + m)]);
+    let max_candidate = end_window + overlap - 1;
+    for candidate_pos in start_window..=max_candidate {
+        if candidate_pos > start_window {
+            let next_base = sequence[candidate_pos + m - 1] as u64;
+            mmer_code = ((mmer_code << 2) & rolling_mask) | next_base;
+        }
+
+        for key_idx in 0..key_count {
+            let queue = &mut queues[key_idx];
+            let min_valid_pos = candidate_pos.saturating_sub(overlap);
+            queue.pop_expired(min_valid_pos);
+            let transformed = mmer_code ^ key_packed_codes[key_idx];
+            queue.push(candidate_pos, transformed);
+        }
+
+        if candidate_pos < start_window + overlap {
+            continue;
+        }
+        let window_start = candidate_pos - overlap;
+        if window_start >= end_window {
+            break;
+        }
+
+        let mut best_oracle = u128::MAX;
+        let mut best_key_idx = 0usize;
+        let mut best_vigemin_pos = 0usize;
+        let mut best_vigemin_code_idx = 0usize;
+
+        for key_idx in 0..key_count {
+            let (vigemin_pos, transformed) = queues[key_idx].front();
+            let vigemin_code = transformed ^ key_packed_codes[key_idx];
+            let vigemin_code_idx = vigemin_code as usize;
+
+            key_counts[key_idx * total_minimizers + vigemin_code_idx] += 1;
+            key_position_sets[key_idx].insert(vigemin_pos - start_window);
+
+            let oracle_value = oracle_dense[key_idx][vigemin_code_idx];
+            if oracle_value < best_oracle {
+                best_oracle = oracle_value;
+                best_key_idx = key_idx;
+                best_vigemin_pos = vigemin_pos;
+                best_vigemin_code_idx = vigemin_code_idx;
+            }
+        }
+
+        heuristic_counts[best_vigemin_code_idx] += 1;
+        heuristic_duplicated_counts[best_key_idx * total_minimizers + best_vigemin_code_idx] += 1;
+        heuristic_position_set.insert(best_vigemin_pos - start_window);
+    }
+
+    let key_unique_counts = key_position_sets
+        .iter()
+        .map(|set| set.len() as u64)
+        .collect::<Vec<_>>();
+    let key_low_masks = key_position_sets
+        .iter()
+        .map(|set| extract_range_mask(set, 0, overlap))
+        .collect::<Vec<_>>();
+    let key_high_masks = key_position_sets
+        .iter()
+        .map(|set| extract_range_mask(set, chunk_windows, overlap))
+        .collect::<Vec<_>>();
+
+    DenseChunkResult {
+        idx,
+        key_counts,
+        heuristic_counts,
+        heuristic_duplicated_counts,
+        key_unique_counts,
+        key_low_masks,
+        key_high_masks,
+        heuristic_unique_count: heuristic_position_set.len() as u64,
+        heuristic_low_mask: extract_range_mask(&heuristic_position_set, 0, overlap),
+        heuristic_high_mask: extract_range_mask(&heuristic_position_set, chunk_windows, overlap),
+    }
+}
+
+fn process_dense_chunk_random(
+    idx: usize,
+    start_window: usize,
+    end_window: usize,
+    k: usize,
+    m: usize,
+    key_packed_codes: &[u64],
+    oracle_dense: &[Vec<u128>],
+    total_minimizers: usize,
+    random_seed: u64,
+) -> DenseChunkResult {
+    let key_count = key_packed_codes.len();
+    let overlap = k - m;
+    let window_span = overlap + 1;
+    let chunk_windows = end_window - start_window;
+    let local_pos_len = chunk_windows + overlap;
+
+    let mut key_counts = vec![0u64; key_count * total_minimizers];
+    let mut heuristic_counts = vec![0u64; total_minimizers];
+    let mut heuristic_duplicated_counts = vec![0u64; key_count * total_minimizers];
+
+    let mut key_position_sets: Vec<PositionBitSet> = (0..key_count)
+        .map(|_| PositionBitSet::new(local_pos_len))
+        .collect();
+    let mut heuristic_position_set = PositionBitSet::new(local_pos_len);
+
+    let mut queues: Vec<MinQueue> = (0..key_count)
+        .map(|_| MinQueue::with_window(window_span))
+        .collect();
+
+    let rolling_mask = if 2 * m >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << (2 * m)) - 1
+    };
+
+    let mut mmer_code = 0u64;
+    for pos in start_window..(start_window + m) {
+        mmer_code = (mmer_code << 2) | (random_base_at(random_seed, pos) as u64);
+    }
+
+    let max_candidate = end_window + overlap - 1;
+    if key_count == 2 {
+        let key0 = key_packed_codes[0];
+        let key1 = key_packed_codes[1];
+        let key1_offset = total_minimizers;
+        let oracle0 = &oracle_dense[0];
+        let oracle1 = &oracle_dense[1];
+        let (q0_slice, q1_slice) = queues.split_at_mut(1);
+        let q0 = &mut q0_slice[0];
+        let q1 = &mut q1_slice[0];
+        let (set0_slice, set1_slice) = key_position_sets.split_at_mut(1);
+        let set0 = &mut set0_slice[0];
+        let set1 = &mut set1_slice[0];
+
+        for candidate_pos in start_window..=max_candidate {
+            if candidate_pos > start_window {
+                let next_base = random_base_at(random_seed, candidate_pos + m - 1) as u64;
+                mmer_code = ((mmer_code << 2) & rolling_mask) | next_base;
+            }
+
+            let min_valid_pos = candidate_pos.saturating_sub(overlap);
+            q0.pop_expired(min_valid_pos);
+            q1.pop_expired(min_valid_pos);
+            q0.push(candidate_pos, mmer_code ^ key0);
+            q1.push(candidate_pos, mmer_code ^ key1);
+
+            if candidate_pos < start_window + overlap {
+                continue;
+            }
+            let window_start = candidate_pos - overlap;
+            if window_start >= end_window {
+                break;
+            }
+
+            let (vigemin_pos0, transformed0) = q0.front();
+            let (vigemin_pos1, transformed1) = q1.front();
+            let vigemin_code_idx0 = (transformed0 ^ key0) as usize;
+            let vigemin_code_idx1 = (transformed1 ^ key1) as usize;
+
+            key_counts[vigemin_code_idx0] += 1;
+            key_counts[key1_offset + vigemin_code_idx1] += 1;
+            set0.insert(vigemin_pos0 - start_window);
+            set1.insert(vigemin_pos1 - start_window);
+
+            let oracle0_value = oracle0[vigemin_code_idx0];
+            let oracle1_value = oracle1[vigemin_code_idx1];
+            if oracle1_value < oracle0_value {
+                heuristic_counts[vigemin_code_idx1] += 1;
+                heuristic_duplicated_counts[key1_offset + vigemin_code_idx1] += 1;
+                heuristic_position_set.insert(vigemin_pos1 - start_window);
+            } else {
+                heuristic_counts[vigemin_code_idx0] += 1;
+                heuristic_duplicated_counts[vigemin_code_idx0] += 1;
+                heuristic_position_set.insert(vigemin_pos0 - start_window);
+            }
+        }
+    } else {
+        for candidate_pos in start_window..=max_candidate {
+            if candidate_pos > start_window {
+                let next_base = random_base_at(random_seed, candidate_pos + m - 1) as u64;
+                mmer_code = ((mmer_code << 2) & rolling_mask) | next_base;
+            }
+
+            for key_idx in 0..key_count {
+                let queue = &mut queues[key_idx];
+                let min_valid_pos = candidate_pos.saturating_sub(overlap);
+                queue.pop_expired(min_valid_pos);
+                let transformed = mmer_code ^ key_packed_codes[key_idx];
+                queue.push(candidate_pos, transformed);
+            }
+
+            if candidate_pos < start_window + overlap {
+                continue;
+            }
+            let window_start = candidate_pos - overlap;
+            if window_start >= end_window {
+                break;
+            }
+
+            let mut best_oracle = u128::MAX;
+            let mut best_key_idx = 0usize;
+            let mut best_vigemin_pos = 0usize;
+            let mut best_vigemin_code_idx = 0usize;
+
+            for key_idx in 0..key_count {
+                let (vigemin_pos, transformed) = queues[key_idx].front();
+                let vigemin_code = transformed ^ key_packed_codes[key_idx];
+                let vigemin_code_idx = vigemin_code as usize;
+
+                key_counts[key_idx * total_minimizers + vigemin_code_idx] += 1;
+                key_position_sets[key_idx].insert(vigemin_pos - start_window);
+
+                let oracle_value = oracle_dense[key_idx][vigemin_code_idx];
+                if oracle_value < best_oracle {
+                    best_oracle = oracle_value;
+                    best_key_idx = key_idx;
+                    best_vigemin_pos = vigemin_pos;
+                    best_vigemin_code_idx = vigemin_code_idx;
+                }
+            }
+
+            heuristic_counts[best_vigemin_code_idx] += 1;
+            heuristic_duplicated_counts[best_key_idx * total_minimizers + best_vigemin_code_idx] +=
+                1;
+            heuristic_position_set.insert(best_vigemin_pos - start_window);
+        }
+    }
+
+    let key_unique_counts = key_position_sets
+        .iter()
+        .map(|set| set.len() as u64)
+        .collect::<Vec<_>>();
+    let key_low_masks = key_position_sets
+        .iter()
+        .map(|set| extract_range_mask(set, 0, overlap))
+        .collect::<Vec<_>>();
+    let key_high_masks = key_position_sets
+        .iter()
+        .map(|set| extract_range_mask(set, chunk_windows, overlap))
+        .collect::<Vec<_>>();
+
+    DenseChunkResult {
+        idx,
+        key_counts,
+        heuristic_counts,
+        heuristic_duplicated_counts,
+        key_unique_counts,
+        key_low_masks,
+        key_high_masks,
+        heuristic_unique_count: heuristic_position_set.len() as u64,
+        heuristic_low_mask: extract_range_mask(&heuristic_position_set, 0, overlap),
+        heuristic_high_mask: extract_range_mask(&heuristic_position_set, chunk_windows, overlap),
+    }
+}
+
 fn run_count(minimizer: &str, key: Option<&str>, k: usize, all_k: bool) -> Result<(), String> {
     let start = Instant::now();
     let minimizer_codes = parse_dna_word(minimizer)?;
@@ -447,48 +849,15 @@ pub fn run_benchmark(
         .map_err(|e| format!("failed to set rayon global thread pool: {e}"))?;
     eprintln!("threads={thread_count}");
 
-    let mut seeded_rng = seed.map(StdRng::seed_from_u64);
-    let keys = if let Some(rng) = seeded_rng.as_mut() {
-        generate_unique_random_keys(m, n_keys, rng)?
-    } else {
-        let mut rng = rand::thread_rng();
-        generate_unique_random_keys(m, n_keys, &mut rng)?
-    };
-    println!("k={k} m={m} n_keys={n_keys}");
-    if let Some(seed_value) = seed {
-        println!("seed={seed_value}");
-    }
-    println!("keys={}", keys.join(","));
+    let effective_seed = seed.unwrap_or_else(rand::random::<u64>);
+    let key_seed = splitmix64(effective_seed ^ 0xC6A4_A793_5BD1_E995);
+    let random_sequence_seed = splitmix64(effective_seed ^ 0x9E37_79B9_7F4A_7C15);
 
-    let sequence_start = Instant::now();
-    let (sequence, sequence_source): (Vec<u8>, String) = if let Some(path) = fasta.as_ref() {
-        (
-            load_fasta_sequence_codes(path)?,
-            format!("fasta:{}", path.display()),
-        )
-    } else if let Some(rng) = seeded_rng.as_mut() {
-        (
-            generate_random_sequence_codes(seq_size, rng),
-            format!("random(seq_size={seq_size})"),
-        )
-    } else {
-        let mut rng = rand::thread_rng();
-        (
-            generate_random_sequence_codes(seq_size, &mut rng),
-            format!("random(seq_size={seq_size})"),
-        )
-    };
-    let sequence_elapsed = sequence_start.elapsed();
-    let sequence_len = sequence.len();
-    if sequence_len < k {
-        return Err(format!(
-            "sequence length must be >= k, got sequence_len={sequence_len}, k={k}"
-        ));
-    }
-    let window_count = sequence_len - k + 1;
-    println!("sequence_source={sequence_source}");
-    println!("sequence_len={sequence_len} windows={window_count}");
-    println!("sequence_build_ms={}", sequence_elapsed.as_millis());
+    let mut key_rng = StdRng::seed_from_u64(key_seed);
+    let keys = generate_unique_random_keys(m, n_keys, &mut key_rng)?;
+    println!("k={k} m={m} n_keys={n_keys}");
+    println!("seed={effective_seed}");
+    println!("keys={}", keys.join(","));
 
     let key_codes: Vec<Vec<u8>> = keys
         .iter()
@@ -499,26 +868,212 @@ pub fn run_benchmark(
     let total_minimizers_usize = usize::try_from(total_minimizers).ok();
     let dense_oracle_entries = total_minimizers_usize.filter(|&n| n <= MAX_DENSE_ORACLE_ENTRIES);
     let dense_counter_entries = total_minimizers_usize.filter(|&n| n <= MAX_DENSE_COUNTER_ENTRIES);
+    let key_packed_codes = key_codes
+        .iter()
+        .map(|codes| encode_dna_slice(codes))
+        .collect::<Vec<_>>();
+
+    let sequence_start = Instant::now();
+    let (sequence, sequence_source, sequence_len): (Option<Vec<u8>>, String, usize) =
+        if let Some(path) = fasta.as_ref() {
+            let loaded = load_fasta_sequence_codes(path)?;
+            let length = loaded.len();
+            (Some(loaded), format!("fasta:{}", path.display()), length)
+        } else if dense_oracle_entries.is_some() {
+            (None, format!("random(seq_size={seq_size})"), seq_size)
+        } else {
+            let mut seq_rng = StdRng::seed_from_u64(random_sequence_seed);
+            let generated = generate_random_sequence_codes(seq_size, &mut seq_rng);
+            let length = generated.len();
+            (
+                Some(generated),
+                format!("random(seq_size={seq_size})"),
+                length,
+            )
+        };
+    let sequence_elapsed = sequence_start.elapsed();
+    if sequence_len < k {
+        return Err(format!(
+            "sequence length must be >= k, got sequence_len={sequence_len}, k={k}"
+        ));
+    }
+    let window_count = sequence_len - k + 1;
+    println!("sequence_source={sequence_source}");
+    println!("sequence_len={sequence_len} windows={window_count}");
+    println!("sequence_build_ms={}", sequence_elapsed.as_millis());
 
     let oracle_start = Instant::now();
+    if let Some(total_minimizers_dense) = dense_oracle_entries {
+        let mut oracle_dense = Vec::with_capacity(n_keys);
+        for key in &keys {
+            oracle_dense.push(enumerate_vigemin_counts_parallel(m, key, k)?);
+        }
+        let oracle_elapsed = oracle_start.elapsed();
+        println!(
+            "oracle_mode=dense_precompute oracle_build_ms={}",
+            oracle_elapsed.as_millis()
+        );
+
+        let chunk_windows = choose_chunk_windows(window_count, thread_count);
+        let chunk_count = window_count.div_ceil(chunk_windows);
+        println!("scan_chunks={chunk_count} chunk_windows={chunk_windows}");
+
+        let scan_start = Instant::now();
+        let mut chunk_results: Vec<DenseChunkResult> = (0..chunk_count)
+            .into_par_iter()
+            .map(|chunk_idx| {
+                let start_window = chunk_idx * chunk_windows;
+                let end_window = (start_window + chunk_windows).min(window_count);
+                if let Some(sequence_buf) = sequence.as_ref() {
+                    process_dense_chunk_from_sequence(
+                        chunk_idx,
+                        start_window,
+                        end_window,
+                        sequence_buf,
+                        k,
+                        m,
+                        &key_packed_codes,
+                        &oracle_dense,
+                        total_minimizers_dense,
+                    )
+                } else {
+                    process_dense_chunk_random(
+                        chunk_idx,
+                        start_window,
+                        end_window,
+                        k,
+                        m,
+                        &key_packed_codes,
+                        &oracle_dense,
+                        total_minimizers_dense,
+                        random_sequence_seed,
+                    )
+                }
+            })
+            .collect();
+        let scan_elapsed = scan_start.elapsed();
+
+        let merge_start = Instant::now();
+        chunk_results.sort_unstable_by_key(|result| result.idx);
+
+        let mut key_partition_counts = vec![0u64; n_keys * total_minimizers_dense];
+        let mut heuristic_counts = vec![0u64; total_minimizers_dense];
+        let mut heuristic_duplicated_counts = vec![0u64; n_keys * total_minimizers_dense];
+        let mut key_unique_totals = vec![0u64; n_keys];
+        let mut heuristic_unique_total = 0u64;
+
+        for result in &chunk_results {
+            for (dst, src) in key_partition_counts
+                .iter_mut()
+                .zip(result.key_counts.iter())
+            {
+                *dst += *src;
+            }
+            for (dst, src) in heuristic_counts
+                .iter_mut()
+                .zip(result.heuristic_counts.iter())
+            {
+                *dst += *src;
+            }
+            for (dst, src) in heuristic_duplicated_counts
+                .iter_mut()
+                .zip(result.heuristic_duplicated_counts.iter())
+            {
+                *dst += *src;
+            }
+            for (dst, src) in key_unique_totals
+                .iter_mut()
+                .zip(result.key_unique_counts.iter())
+            {
+                *dst += *src;
+            }
+            heuristic_unique_total += result.heuristic_unique_count;
+        }
+
+        let overlap = k - m;
+        if overlap > 0 {
+            for pair in chunk_results.windows(2) {
+                let left = &pair[0];
+                let right = &pair[1];
+                for key_idx in 0..n_keys {
+                    key_unique_totals[key_idx] -= mask_intersection_popcount(
+                        &left.key_high_masks[key_idx],
+                        &right.key_low_masks[key_idx],
+                    );
+                }
+                heuristic_unique_total -= mask_intersection_popcount(
+                    &left.heuristic_high_mask,
+                    &right.heuristic_low_mask,
+                );
+            }
+        }
+        let merge_elapsed = merge_start.elapsed();
+
+        println!(
+            "scan_ms={} sec_per_key_kmer={:.9}",
+            scan_elapsed.as_millis(),
+            scan_elapsed.as_secs_f64() / (window_count as f64 * n_keys as f64)
+        );
+        println!("merge_ms={}", merge_elapsed.as_millis());
+
+        let random_density = 2.0f64 / ((k - m + 1) as f64);
+        let mut key_density_sum = 0.0f64;
+        for key_idx in 0..n_keys {
+            let start = key_idx * total_minimizers_dense;
+            let end = start + total_minimizers_dense;
+            let buckets = key_partition_counts[start..end]
+                .iter()
+                .filter(|&&value| value > 0)
+                .count();
+            let density = key_unique_totals[key_idx] as f64 / (window_count as f64);
+            key_density_sum += density;
+            println!(
+                "key={} buckets={} density={:.12}",
+                keys[key_idx], buckets, density
+            );
+        }
+        println!("Random minimizer density : {random_density}");
+        println!(
+            "Mean density for the keys : {}",
+            key_density_sum / (n_keys as f64)
+        );
+
+        let heuristic_bucket_count = heuristic_counts.iter().filter(|&&v| v > 0).count();
+        let mut heuristic_duplicated_bucket_count = 0usize;
+        for key_idx in 0..n_keys {
+            let start = key_idx * total_minimizers_dense;
+            let end = start + total_minimizers_dense;
+            heuristic_duplicated_bucket_count += heuristic_duplicated_counts[start..end]
+                .iter()
+                .filter(|&&value| value > 0)
+                .count();
+        }
+        let heuristic_density = heuristic_unique_total as f64 / (window_count as f64);
+
+        println!("Heuristic number of buckets: {heuristic_bucket_count}");
+        println!(
+            "Heuristic number of buckets (with duplication): {heuristic_duplicated_bucket_count}"
+        );
+        println!("Random minimizer density : {random_density}");
+        println!("Density of the heuristic (duplicated or not): {heuristic_density}");
+
+        println!(
+            "elapsed_total_ms={}",
+            sequence_elapsed.as_millis()
+                + oracle_elapsed.as_millis()
+                + scan_elapsed.as_millis()
+                + merge_elapsed.as_millis()
+        );
+        return Ok(());
+    }
+
     let mut oracle_by_key: Vec<OracleLookup> = Vec::with_capacity(n_keys);
     for (key, key_code) in keys.iter().zip(key_codes.iter()) {
-        oracle_by_key.push(OracleLookup::new(
-            key,
-            key_code,
-            m,
-            k,
-            dense_oracle_entries,
-        )?);
+        oracle_by_key.push(OracleLookup::new(key, key_code, m, k, None)?);
     }
     let oracle_elapsed = oracle_start.elapsed();
     println!(
-        "oracle_mode={} oracle_build_ms={}",
-        if dense_oracle_entries.is_some() {
-            "dense_precompute"
-        } else {
-            "lazy_cache"
-        },
+        "oracle_mode=lazy_cache oracle_build_ms={}",
         oracle_elapsed.as_millis()
     );
 
@@ -535,6 +1090,9 @@ pub fn run_benchmark(
         .map(|_| MinimizerCounter::new(dense_counter_entries, MAX_DENSE_COUNTER_ENTRIES))
         .collect();
     let mut heuristic_positions = PositionBitSet::new(sequence_len);
+    let sequence = sequence.as_ref().ok_or_else(|| {
+        "internal error: sequence buffer missing for lazy_cache benchmark path".to_owned()
+    })?;
 
     let scan_start = Instant::now();
     for window_start in 0..window_count {
