@@ -74,8 +74,16 @@ Then it computes per-key stats, verifies sums, and writes throughput artifacts:
 - `vigemin_throughput_k=<k>_m=<m>.csv`
 - `vigemin_throughput_k=<k>_m=<m>.png`
 
+Subcommand form:
+
 ```bash
 cargo run --release -- enumerate-keys --m 10 --k 31 --output-dir ../Figures_theory
+```
+
+Dedicated binary form:
+
+```bash
+cargo run --release --bin vigemin_enumerate_keys_benchmark -- --m 10 --k 31 --output-dir ../Figures_theory
 ```
 
 Optional controls:
@@ -84,3 +92,37 @@ Optional controls:
 - `--distribution-plots` to also generate full distribution plots (high memory use):
   - `vigemin_enumeration_k=<k>_m=<m>.png`
   - `vigemin_sorted_enumeration_k=<k>_m=<m>.png`
+
+### 4. Reproduce `pikmin_benchmark.py` workflow (optimized scan + heuristic)
+
+This command computes, in one pass:
+
+- per-key vigemin partitions
+- heuristic partition (min oracle across keys)
+- heuristic partition with duplicated key/minimizer buckets
+- densities and bucket counts
+
+Default behavior matches the Python benchmark setup with random DNA sequence generation:
+
+Subcommand form:
+
+```bash
+cargo run --release -- benchmark --k 31 --m 6 --n-keys 8 --seq-size 100000
+```
+
+Dedicated binary form:
+
+```bash
+cargo run --release --bin pikmin_benchmark -- --k 31 --m 6 --n-keys 8 --seq-size 100000
+```
+
+Use an input FASTA file instead of a random sequence:
+
+```bash
+cargo run --release --bin pikmin_benchmark -- --k 31 --m 6 --n-keys 8 --fasta /path/to/input.fa
+```
+
+Optional controls:
+
+- `--threads N` to pin Rayon threads (used by oracle precompute path)
+- `--seed S` for deterministic random key generation (and deterministic random sequence if `--fasta` is not used)
