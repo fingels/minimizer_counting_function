@@ -127,6 +127,11 @@ Optional controls:
 - `--threads N` to pin Rayon threads (used by oracle precompute path)
 - `--seed S` for deterministic random key generation (and deterministic random sequence if `--fasta` is not used)
   If `--seed` is omitted, a random seed is generated and printed.
+- `--output-dir PATH` directory where the benchmark plot is written (default: current directory)
+
+This command writes:
+
+- `pikmin_benchmark_k=<k>_m=<m>_N_keys=<n_keys>_seq_size=<sequence_len>.png`
 
 ## Benchmark Binaries
 
@@ -169,3 +174,4 @@ Options:
 - `--fasta <path>` optional; if set, input sequence is read from FASTA
 - `--threads <usize>` default: all available threads
 - `--seed <u64>` optional; if omitted, a random seed is generated and printed
+- `--output-dir <path>` default: `.`

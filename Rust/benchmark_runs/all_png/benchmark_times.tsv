@@ -1,0 +1,15 @@
+m	status	reason	elapsed_total_ms	wall_sec	peak_rss_kb	plot
+2	0	ok	41392	45	5199740	hg_m2_15_guarded_v2_20260212_224638_plots__pikmin_benchmark_k=31_m=2_N_keys=8_seq_size=3117292070.png
+3	0	ok	42378	45	5199744	hg_m2_15_guarded_v2_20260212_224638_plots__pikmin_benchmark_k=31_m=3_N_keys=8_seq_size=3117292070.png
+4	0	ok	42730	45	5289852	hg_m2_15_guarded_v2_20260212_224638_plots__pikmin_benchmark_k=31_m=4_N_keys=8_seq_size=3117292070.png
+5	0	ok	43076	46	5200052	hg_m2_15_guarded_v2_20260212_224638_plots__pikmin_benchmark_k=31_m=5_N_keys=8_seq_size=3117292070.png
+6	0	ok	43992	45	5199388	hg_m2_15_guarded_v2_20260212_224638_plots__pikmin_benchmark_k=31_m=6_N_keys=8_seq_size=3117292070.png
+7	0	ok	43607	45	5598364	hg_m2_15_guarded_v2_20260212_224638_plots__pikmin_benchmark_k=31_m=7_N_keys=8_seq_size=3117292070.png
+8	0	ok	43482	45	5735044	hg_m2_15_guarded_v2_20260212_224638_plots__pikmin_benchmark_k=31_m=8_N_keys=8_seq_size=3117292070.png
+9	0	ok	48431	50	6289848	hg_m2_15_guarded_v2_20260212_224638_plots__pikmin_benchmark_k=31_m=9_N_keys=8_seq_size=3117292070.png
+10	0	ok	53091	55	12446252	hg_m2_15_guarded_v2_20260212_224638_plots__pikmin_benchmark_k=31_m=10_N_keys=8_seq_size=3117292070.png
+11	0	ok	55571	60	5690680	hg_m2_15_guarded_v2_20260212_224638_plots__pikmin_benchmark_k=31_m=11_N_keys=8_seq_size=3117292070.png
+12	0	ok	69780	75	9010716	hg_m2_15_guarded_v2_20260212_224638_plots__pikmin_benchmark_k=31_m=12_N_keys=8_seq_size=3117292070.png
+13	0	ok	132066	140	28068992	hg_m2_15_guarded_v2_20260212_224638_plots__pikmin_benchmark_k=31_m=13_N_keys=8_seq_size=3117292070.png
+14	0	ok	1137252	1152	21853288	m14_final_20260213_000306__plots__pikmin_benchmark_k=31_m=14_N_keys=8_seq_size=3117292070.png
+15	0	ok	1249318	1282	47560344	m15_retry_20260212_234124__plots__pikmin_benchmark_k=31_m=15_N_keys=8_seq_size=3117292070.png

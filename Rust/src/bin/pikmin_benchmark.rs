@@ -23,6 +23,8 @@ struct Cli {
     threads: Option<usize>,
     #[arg(long)]
     seed: Option<u64>,
+    #[arg(long, default_value = ".")]
+    output_dir: PathBuf,
 }
 
 fn main() -> Result<(), String> {
@@ -35,5 +37,6 @@ fn main() -> Result<(), String> {
         cli.fasta,
         cli.threads,
         cli.seed,
+        cli.output_dir,
     )
 }

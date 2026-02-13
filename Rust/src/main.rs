@@ -1,3 +1,4 @@
+use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use clap::{Parser, Subcommand};
 use minimizer_vigemin_rust::dna::{
     decode_index_to_kmer, decode_index_to_kmer_inplace, format_dna_word, parse_dna_word,
@@ -10,10 +11,11 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
-use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 #[derive(Debug, Parser)]
@@ -83,6 +85,8 @@ enum Commands {
         threads: Option<usize>,
         #[arg(long)]
         seed: Option<u64>,
+        #[arg(long, default_value = ".")]
+        output_dir: PathBuf,
     },
 }
 
@@ -119,7 +123,8 @@ fn main() -> Result<(), String> {
             fasta,
             threads,
             seed,
-        } => run_benchmark(k, m, n_keys, seq_size, fasta, threads, seed),
+            output_dir,
+        } => run_benchmark(k, m, n_keys, seq_size, fasta, threads, seed, output_dir),
     }
 }
 
@@ -137,7 +142,7 @@ fn resolve_thread_count(threads: Option<usize>) -> usize {
 }
 
 const MAX_DENSE_ORACLE_ENTRIES: usize = 1usize << 20;
-const MAX_DENSE_COUNTER_ENTRIES: usize = 1usize << 22;
+const MAX_LAZY_ATOMIC_COUNTER_ENTRIES: usize = 1usize << 26;
 
 #[derive(Debug, Clone)]
 struct PositionBitSet {
@@ -181,10 +186,14 @@ impl PositionBitSet {
 #[derive(Debug, Clone)]
 enum MinimizerCounter {
     Dense(Vec<u64>),
-    Sparse(HashMap<u64, u64>),
+    Sparse(HashMap<u32, u32>),
 }
 
 impl MinimizerCounter {
+    fn sparse() -> Self {
+        Self::Sparse(HashMap::new())
+    }
+
     fn new(total_entries: Option<usize>, dense_threshold: usize) -> Self {
         match total_entries {
             Some(total) if total <= dense_threshold => Self::Dense(vec![0u64; total]),
@@ -199,7 +208,7 @@ impl MinimizerCounter {
                 values[code as usize] += 1;
             }
             Self::Sparse(values) => {
-                *values.entry(code).or_insert(0) += 1;
+                *values.entry(code as u32).or_insert(0) += 1;
             }
         }
     }
@@ -209,6 +218,46 @@ impl MinimizerCounter {
             Self::Dense(values) => values.iter().filter(|&&value| value > 0).count(),
             Self::Sparse(values) => values.len(),
         }
+    }
+
+    fn merge_from(&mut self, other: Self) {
+        match (self, other) {
+            (Self::Dense(dst), Self::Dense(src)) => {
+                for (dst_value, src_value) in dst.iter_mut().zip(src.into_iter()) {
+                    *dst_value += src_value;
+                }
+            }
+            (Self::Dense(dst), Self::Sparse(src)) => {
+                for (code, count) in src {
+                    dst[code as usize] += count as u64;
+                }
+            }
+            (Self::Sparse(dst), Self::Dense(src)) => {
+                for (code, count) in src.into_iter().enumerate() {
+                    if count > 0 {
+                        *dst.entry(code as u32).or_insert(0) += count as u32;
+                    }
+                }
+            }
+            (Self::Sparse(dst), Self::Sparse(src)) => {
+                for (code, count) in src {
+                    *dst.entry(code).or_insert(0) += count;
+                }
+            }
+        }
+    }
+
+    fn sorted_non_zero_values(&self) -> Vec<u64> {
+        let mut out = match self {
+            Self::Dense(values) => values
+                .iter()
+                .copied()
+                .filter(|&value| value > 0)
+                .collect::<Vec<_>>(),
+            Self::Sparse(values) => values.values().copied().map(u64::from).collect::<Vec<_>>(),
+        };
+        out.sort_unstable_by(|a, b| b.cmp(a));
+        out
     }
 }
 
@@ -461,11 +510,49 @@ struct DenseChunkResult {
     heuristic_high_mask: Vec<u64>,
 }
 
+struct DenseChunkBoundary {
+    key_unique_counts: Vec<u64>,
+    key_low_masks: Vec<Vec<u64>>,
+    key_high_masks: Vec<Vec<u64>>,
+    heuristic_unique_count: u64,
+    heuristic_low_mask: Vec<u64>,
+    heuristic_high_mask: Vec<u64>,
+}
+
+struct DenseMergeState {
+    key_partition_counts: Vec<u64>,
+    heuristic_counts: Vec<u64>,
+    heuristic_duplicated_counts: Vec<u64>,
+    chunk_boundaries: Vec<Option<DenseChunkBoundary>>,
+}
+
+struct LazyChunkResult {
+    idx: usize,
+    key_partition_counts: Vec<MinimizerCounter>,
+    heuristic_counts: MinimizerCounter,
+    heuristic_duplicated_counts: Vec<MinimizerCounter>,
+    boundary: DenseChunkBoundary,
+}
+
+struct LazyMergeState {
+    key_partition_counts: Vec<MinimizerCounter>,
+    heuristic_counts: MinimizerCounter,
+    heuristic_duplicated_counts: Vec<MinimizerCounter>,
+    chunk_boundaries: Vec<Option<DenseChunkBoundary>>,
+}
+
 #[inline]
 fn choose_chunk_windows(window_count: usize, thread_count: usize) -> usize {
     let target_chunks = thread_count.saturating_mul(8).max(1);
     let base = window_count.div_ceil(target_chunks);
     base.max(500_000)
+}
+
+#[inline]
+fn choose_lazy_chunk_windows(window_count: usize, thread_count: usize) -> usize {
+    let target_chunks = thread_count.saturating_mul(32).max(1);
+    let base = window_count.div_ceil(target_chunks);
+    base.clamp(100_000, 300_000)
 }
 
 #[inline]
@@ -793,6 +880,237 @@ fn process_dense_chunk_random(
     }
 }
 
+fn process_lazy_chunk_from_sequence(
+    idx: usize,
+    start_window: usize,
+    end_window: usize,
+    sequence: &[u8],
+    k: usize,
+    m: usize,
+    keys: &[String],
+    key_codes: &[Vec<u8>],
+    key_packed_codes: &[u64],
+) -> Result<LazyChunkResult, String> {
+    let key_count = key_codes.len();
+    let overlap = k - m;
+    let window_span = overlap + 1;
+    let chunk_windows = end_window - start_window;
+    let local_pos_len = chunk_windows + overlap;
+
+    let mut oracle_by_key: Vec<OracleLookup> = Vec::with_capacity(key_count);
+    for (key, key_code) in keys.iter().zip(key_codes.iter()) {
+        oracle_by_key.push(OracleLookup::new(key, key_code, m, k, None)?);
+    }
+
+    let mut key_partition_counts: Vec<MinimizerCounter> =
+        (0..key_count).map(|_| MinimizerCounter::sparse()).collect();
+    let mut heuristic_counts = MinimizerCounter::sparse();
+    let mut heuristic_duplicated_counts: Vec<MinimizerCounter> =
+        (0..key_count).map(|_| MinimizerCounter::sparse()).collect();
+
+    let mut key_position_sets: Vec<PositionBitSet> = (0..key_count)
+        .map(|_| PositionBitSet::new(local_pos_len))
+        .collect();
+    let mut heuristic_position_set = PositionBitSet::new(local_pos_len);
+
+    let mut queues: Vec<MinQueue> = (0..key_count)
+        .map(|_| MinQueue::with_window(window_span))
+        .collect();
+    let rolling_mask = if 2 * m >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << (2 * m)) - 1
+    };
+    let mut mmer_code = encode_dna_slice(&sequence[start_window..(start_window + m)]);
+    let max_candidate = end_window + overlap - 1;
+
+    for candidate_pos in start_window..=max_candidate {
+        if candidate_pos > start_window {
+            let next_base = sequence[candidate_pos + m - 1] as u64;
+            mmer_code = ((mmer_code << 2) & rolling_mask) | next_base;
+        }
+
+        for key_idx in 0..key_count {
+            let queue = &mut queues[key_idx];
+            let min_valid_pos = candidate_pos.saturating_sub(overlap);
+            queue.pop_expired(min_valid_pos);
+            queue.push(candidate_pos, mmer_code ^ key_packed_codes[key_idx]);
+        }
+
+        if candidate_pos < start_window + overlap {
+            continue;
+        }
+        let window_start = candidate_pos - overlap;
+        if window_start >= end_window {
+            break;
+        }
+
+        let mut best_oracle = u128::MAX;
+        let mut best_key_idx = 0usize;
+        let mut best_vigemin_pos = 0usize;
+        let mut best_vigemin_code = 0u64;
+
+        for key_idx in 0..key_count {
+            let (vigemin_pos, transformed) = queues[key_idx].front();
+            let vigemin_code = transformed ^ key_packed_codes[key_idx];
+            key_partition_counts[key_idx].increment(vigemin_code);
+            key_position_sets[key_idx].insert(vigemin_pos - start_window);
+
+            let oracle_value = oracle_by_key[key_idx].get(vigemin_code, k);
+            if oracle_value < best_oracle {
+                best_oracle = oracle_value;
+                best_key_idx = key_idx;
+                best_vigemin_pos = vigemin_pos;
+                best_vigemin_code = vigemin_code;
+            }
+        }
+
+        heuristic_counts.increment(best_vigemin_code);
+        heuristic_duplicated_counts[best_key_idx].increment(best_vigemin_code);
+        heuristic_position_set.insert(best_vigemin_pos - start_window);
+    }
+
+    let key_unique_counts = key_position_sets
+        .iter()
+        .map(|set| set.len() as u64)
+        .collect::<Vec<_>>();
+    let key_low_masks = key_position_sets
+        .iter()
+        .map(|set| extract_range_mask(set, 0, overlap))
+        .collect::<Vec<_>>();
+    let key_high_masks = key_position_sets
+        .iter()
+        .map(|set| extract_range_mask(set, chunk_windows, overlap))
+        .collect::<Vec<_>>();
+
+    Ok(LazyChunkResult {
+        idx,
+        key_partition_counts,
+        heuristic_counts,
+        heuristic_duplicated_counts,
+        boundary: DenseChunkBoundary {
+            key_unique_counts,
+            key_low_masks,
+            key_high_masks,
+            heuristic_unique_count: heuristic_position_set.len() as u64,
+            heuristic_low_mask: extract_range_mask(&heuristic_position_set, 0, overlap),
+            heuristic_high_mask: extract_range_mask(
+                &heuristic_position_set,
+                chunk_windows,
+                overlap,
+            ),
+        },
+    })
+}
+
+fn process_lazy_chunk_atomic(
+    start_window: usize,
+    end_window: usize,
+    sequence: &[u8],
+    k: usize,
+    m: usize,
+    key_packed_codes: &[u64],
+    oracle_dense: &[Vec<u128>],
+    total_minimizers: usize,
+    key_partition_counts: &[AtomicU32],
+    heuristic_counts: &[AtomicU32],
+    heuristic_duplicated_counts: &[AtomicU32],
+) -> DenseChunkBoundary {
+    let key_count = key_packed_codes.len();
+    let overlap = k - m;
+    let window_span = overlap + 1;
+    let chunk_windows = end_window - start_window;
+    let local_pos_len = chunk_windows + overlap;
+
+    let mut key_position_sets: Vec<PositionBitSet> = (0..key_count)
+        .map(|_| PositionBitSet::new(local_pos_len))
+        .collect();
+    let mut heuristic_position_set = PositionBitSet::new(local_pos_len);
+
+    let mut queues: Vec<MinQueue> = (0..key_count)
+        .map(|_| MinQueue::with_window(window_span))
+        .collect();
+    let rolling_mask = if 2 * m >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << (2 * m)) - 1
+    };
+    let mut mmer_code = encode_dna_slice(&sequence[start_window..(start_window + m)]);
+    let max_candidate = end_window + overlap - 1;
+
+    for candidate_pos in start_window..=max_candidate {
+        if candidate_pos > start_window {
+            let next_base = sequence[candidate_pos + m - 1] as u64;
+            mmer_code = ((mmer_code << 2) & rolling_mask) | next_base;
+        }
+
+        for key_idx in 0..key_count {
+            let queue = &mut queues[key_idx];
+            let min_valid_pos = candidate_pos.saturating_sub(overlap);
+            queue.pop_expired(min_valid_pos);
+            queue.push(candidate_pos, mmer_code ^ key_packed_codes[key_idx]);
+        }
+
+        if candidate_pos < start_window + overlap {
+            continue;
+        }
+        let window_start = candidate_pos - overlap;
+        if window_start >= end_window {
+            break;
+        }
+
+        let mut best_oracle = u128::MAX;
+        let mut best_key_idx = 0usize;
+        let mut best_vigemin_pos = 0usize;
+        let mut best_vigemin_code = 0u64;
+
+        for key_idx in 0..key_count {
+            let (vigemin_pos, transformed) = queues[key_idx].front();
+            let vigemin_code = transformed ^ key_packed_codes[key_idx];
+            let code_idx = vigemin_code as usize;
+            key_partition_counts[key_idx * total_minimizers + code_idx]
+                .fetch_add(1, Ordering::Relaxed);
+            key_position_sets[key_idx].insert(vigemin_pos - start_window);
+
+            let oracle_value = oracle_dense[key_idx][code_idx];
+            if oracle_value < best_oracle {
+                best_oracle = oracle_value;
+                best_key_idx = key_idx;
+                best_vigemin_pos = vigemin_pos;
+                best_vigemin_code = vigemin_code;
+            }
+        }
+
+        let best_code_idx = best_vigemin_code as usize;
+        heuristic_counts[best_code_idx].fetch_add(1, Ordering::Relaxed);
+        heuristic_duplicated_counts[best_key_idx * total_minimizers + best_code_idx]
+            .fetch_add(1, Ordering::Relaxed);
+        heuristic_position_set.insert(best_vigemin_pos - start_window);
+    }
+
+    let key_unique_counts = key_position_sets
+        .iter()
+        .map(|set| set.len() as u64)
+        .collect::<Vec<_>>();
+    let key_low_masks = key_position_sets
+        .iter()
+        .map(|set| extract_range_mask(set, 0, overlap))
+        .collect::<Vec<_>>();
+    let key_high_masks = key_position_sets
+        .iter()
+        .map(|set| extract_range_mask(set, chunk_windows, overlap))
+        .collect::<Vec<_>>();
+
+    DenseChunkBoundary {
+        key_unique_counts,
+        key_low_masks,
+        key_high_masks,
+        heuristic_unique_count: heuristic_position_set.len() as u64,
+        heuristic_low_mask: extract_range_mask(&heuristic_position_set, 0, overlap),
+        heuristic_high_mask: extract_range_mask(&heuristic_position_set, chunk_windows, overlap),
+    }
+}
+
 fn run_count(minimizer: &str, key: Option<&str>, k: usize, all_k: bool) -> Result<(), String> {
     let start = Instant::now();
     let minimizer_codes = parse_dna_word(minimizer)?;
@@ -828,6 +1146,7 @@ pub fn run_benchmark(
     fasta: Option<PathBuf>,
     threads: Option<usize>,
     seed: Option<u64>,
+    output_dir: PathBuf,
 ) -> Result<(), String> {
     if m == 0 {
         return Err("m must be >= 1".to_owned());
@@ -867,7 +1186,6 @@ pub fn run_benchmark(
     let total_minimizers = total_kmers(m)?;
     let total_minimizers_usize = usize::try_from(total_minimizers).ok();
     let dense_oracle_entries = total_minimizers_usize.filter(|&n| n <= MAX_DENSE_ORACLE_ENTRIES);
-    let dense_counter_entries = total_minimizers_usize.filter(|&n| n <= MAX_DENSE_COUNTER_ENTRIES);
     let key_packed_codes = key_codes
         .iter()
         .map(|codes| encode_dna_slice(codes))
@@ -901,6 +1219,14 @@ pub fn run_benchmark(
     println!("sequence_source={sequence_source}");
     println!("sequence_len={sequence_len} windows={window_count}");
     println!("sequence_build_ms={}", sequence_elapsed.as_millis());
+    println!("output_dir={}", output_dir.display());
+
+    fs::create_dir_all(&output_dir).map_err(|e| {
+        format!(
+            "failed to create output directory {}: {e}",
+            output_dir.display()
+        )
+    })?;
 
     let oracle_start = Instant::now();
     if let Some(total_minimizers_dense) = dense_oracle_entries {
@@ -918,13 +1244,20 @@ pub fn run_benchmark(
         let chunk_count = window_count.div_ceil(chunk_windows);
         println!("scan_chunks={chunk_count} chunk_windows={chunk_windows}");
 
+        let merge_state = Arc::new(Mutex::new(DenseMergeState {
+            key_partition_counts: vec![0u64; n_keys * total_minimizers_dense],
+            heuristic_counts: vec![0u64; total_minimizers_dense],
+            heuristic_duplicated_counts: vec![0u64; n_keys * total_minimizers_dense],
+            chunk_boundaries: (0..chunk_count).map(|_| None).collect(),
+        }));
+
         let scan_start = Instant::now();
-        let mut chunk_results: Vec<DenseChunkResult> = (0..chunk_count)
+        (0..chunk_count)
             .into_par_iter()
-            .map(|chunk_idx| {
+            .try_for_each(|chunk_idx| -> Result<(), String> {
                 let start_window = chunk_idx * chunk_windows;
                 let end_window = (start_window + chunk_windows).min(window_count);
-                if let Some(sequence_buf) = sequence.as_ref() {
+                let result = if let Some(sequence_buf) = sequence.as_ref() {
                     process_dense_chunk_from_sequence(
                         chunk_idx,
                         start_window,
@@ -948,53 +1281,88 @@ pub fn run_benchmark(
                         total_minimizers_dense,
                         random_sequence_seed,
                     )
+                };
+
+                let DenseChunkResult {
+                    idx,
+                    key_counts,
+                    heuristic_counts,
+                    heuristic_duplicated_counts,
+                    key_unique_counts,
+                    key_low_masks,
+                    key_high_masks,
+                    heuristic_unique_count,
+                    heuristic_low_mask,
+                    heuristic_high_mask,
+                } = result;
+
+                let mut state = merge_state
+                    .lock()
+                    .map_err(|_| "failed to lock dense merge state".to_owned())?;
+                for (dst, src) in state.key_partition_counts.iter_mut().zip(key_counts.iter()) {
+                    *dst += *src;
                 }
+                for (dst, src) in state
+                    .heuristic_counts
+                    .iter_mut()
+                    .zip(heuristic_counts.iter())
+                {
+                    *dst += *src;
+                }
+                for (dst, src) in state
+                    .heuristic_duplicated_counts
+                    .iter_mut()
+                    .zip(heuristic_duplicated_counts.iter())
+                {
+                    *dst += *src;
+                }
+                state.chunk_boundaries[idx] = Some(DenseChunkBoundary {
+                    key_unique_counts,
+                    key_low_masks,
+                    key_high_masks,
+                    heuristic_unique_count,
+                    heuristic_low_mask,
+                    heuristic_high_mask,
+                });
+                Ok(())
             })
-            .collect();
+            .map_err(|e| format!("dense scan failed: {e}"))?;
         let scan_elapsed = scan_start.elapsed();
 
         let merge_start = Instant::now();
-        chunk_results.sort_unstable_by_key(|result| result.idx);
+        let state = Arc::try_unwrap(merge_state)
+            .map_err(|_| "internal error: dense merge state still shared".to_owned())?
+            .into_inner()
+            .map_err(|_| "failed to unwrap dense merge state".to_owned())?;
 
-        let mut key_partition_counts = vec![0u64; n_keys * total_minimizers_dense];
-        let mut heuristic_counts = vec![0u64; total_minimizers_dense];
-        let mut heuristic_duplicated_counts = vec![0u64; n_keys * total_minimizers_dense];
+        let boundaries = state
+            .chunk_boundaries
+            .iter()
+            .enumerate()
+            .map(|(idx, boundary)| {
+                boundary
+                    .as_ref()
+                    .ok_or_else(|| format!("internal error: missing dense chunk result {idx}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         let mut key_unique_totals = vec![0u64; n_keys];
         let mut heuristic_unique_total = 0u64;
-
-        for result in &chunk_results {
-            for (dst, src) in key_partition_counts
-                .iter_mut()
-                .zip(result.key_counts.iter())
-            {
-                *dst += *src;
-            }
-            for (dst, src) in heuristic_counts
-                .iter_mut()
-                .zip(result.heuristic_counts.iter())
-            {
-                *dst += *src;
-            }
-            for (dst, src) in heuristic_duplicated_counts
-                .iter_mut()
-                .zip(result.heuristic_duplicated_counts.iter())
-            {
-                *dst += *src;
-            }
+        for boundary in &boundaries {
             for (dst, src) in key_unique_totals
                 .iter_mut()
-                .zip(result.key_unique_counts.iter())
+                .zip(boundary.key_unique_counts.iter())
             {
                 *dst += *src;
             }
-            heuristic_unique_total += result.heuristic_unique_count;
+            heuristic_unique_total += boundary.heuristic_unique_count;
         }
 
         let overlap = k - m;
         if overlap > 0 {
-            for pair in chunk_results.windows(2) {
-                let left = &pair[0];
-                let right = &pair[1];
+            for pair in boundaries.windows(2) {
+                let left = pair[0];
+                let right = pair[1];
                 for key_idx in 0..n_keys {
                     key_unique_totals[key_idx] -= mask_intersection_popcount(
                         &left.key_high_masks[key_idx],
@@ -1007,6 +1375,10 @@ pub fn run_benchmark(
                 );
             }
         }
+
+        let key_partition_counts = state.key_partition_counts;
+        let heuristic_counts = state.heuristic_counts;
+        let heuristic_duplicated_counts = state.heuristic_duplicated_counts;
         let merge_elapsed = merge_start.elapsed();
 
         println!(
@@ -1057,6 +1429,28 @@ pub fn run_benchmark(
         println!("Random minimizer density : {random_density}");
         println!("Density of the heuristic (duplicated or not): {heuristic_density}");
 
+        let mut key_buckets = Vec::with_capacity(n_keys);
+        for key_idx in 0..n_keys {
+            let start = key_idx * total_minimizers_dense;
+            let end = start + total_minimizers_dense;
+            key_buckets.push(sorted_non_zero_slice(&key_partition_counts[start..end]));
+        }
+        let heuristic_buckets = sorted_non_zero_slice(&heuristic_counts);
+        let heuristic_duplicated_buckets = sorted_non_zero_slice(&heuristic_duplicated_counts);
+        let plot_path = output_dir.join(format!(
+            "pikmin_benchmark_k={k}_m={m}_N_keys={n_keys}_seq_size={sequence_len}.png"
+        ));
+        plot_pikmin_buckets(
+            &key_buckets,
+            &heuristic_buckets,
+            &heuristic_duplicated_buckets,
+            n_keys,
+            m,
+            k,
+            &plot_path,
+        )?;
+        eprintln!("wrote {}", plot_path.display());
+
         println!(
             "elapsed_total_ms={}",
             sequence_elapsed.as_millis()
@@ -1067,73 +1461,342 @@ pub fn run_benchmark(
         return Ok(());
     }
 
-    let mut oracle_by_key: Vec<OracleLookup> = Vec::with_capacity(n_keys);
-    for (key, key_code) in keys.iter().zip(key_codes.iter()) {
-        oracle_by_key.push(OracleLookup::new(key, key_code, m, k, None)?);
-    }
+    let lazy_atomic_entries =
+        total_minimizers_usize.filter(|&n| n <= MAX_LAZY_ATOMIC_COUNTER_ENTRIES);
+    let lazy_dense_oracle = if lazy_atomic_entries.is_some() {
+        let mut oracle_dense = Vec::with_capacity(n_keys);
+        for key in &keys {
+            oracle_dense.push(enumerate_vigemin_counts_parallel(m, key, k)?);
+        }
+        Some(oracle_dense)
+    } else {
+        None
+    };
     let oracle_elapsed = oracle_start.elapsed();
-    println!(
-        "oracle_mode=lazy_cache oracle_build_ms={}",
-        oracle_elapsed.as_millis()
-    );
+    if lazy_dense_oracle.is_some() {
+        println!(
+            "oracle_mode=lazy_dense_oracle oracle_build_ms={}",
+            oracle_elapsed.as_millis()
+        );
+    } else {
+        println!(
+            "oracle_mode=lazy_cache oracle_build_ms={}",
+            oracle_elapsed.as_millis()
+        );
+    }
 
-    let mut key_partition_counts: Vec<MinimizerCounter> = (0..n_keys)
-        .map(|_| MinimizerCounter::new(dense_counter_entries, MAX_DENSE_COUNTER_ENTRIES))
-        .collect();
-    let mut key_partition_positions: Vec<PositionBitSet> = (0..n_keys)
-        .map(|_| PositionBitSet::new(sequence_len))
-        .collect();
-
-    let mut heuristic_counts =
-        MinimizerCounter::new(dense_counter_entries, MAX_DENSE_COUNTER_ENTRIES);
-    let mut heuristic_duplicated_counts: Vec<MinimizerCounter> = (0..n_keys)
-        .map(|_| MinimizerCounter::new(dense_counter_entries, MAX_DENSE_COUNTER_ENTRIES))
-        .collect();
-    let mut heuristic_positions = PositionBitSet::new(sequence_len);
     let sequence = sequence.as_ref().ok_or_else(|| {
         "internal error: sequence buffer missing for lazy_cache benchmark path".to_owned()
     })?;
+    let chunk_windows = choose_lazy_chunk_windows(window_count, thread_count);
+    let chunk_count = window_count.div_ceil(chunk_windows);
+    println!("scan_chunks={chunk_count} chunk_windows={chunk_windows}");
 
-    let scan_start = Instant::now();
-    for window_start in 0..window_count {
-        let kmer = &sequence[window_start..(window_start + k)];
+    if let Some(total_minimizers_atomic) = lazy_atomic_entries {
+        let oracle_dense = lazy_dense_oracle
+            .as_ref()
+            .ok_or_else(|| "internal error: missing lazy dense oracle".to_owned())?;
+        println!("lazy_counter_mode=atomic_dense total_minimizers={total_minimizers_atomic}");
+        let key_partition_counts = Arc::new(
+            (0..(n_keys * total_minimizers_atomic))
+                .map(|_| AtomicU32::new(0))
+                .collect::<Vec<_>>(),
+        );
+        let heuristic_counts = Arc::new(
+            (0..total_minimizers_atomic)
+                .map(|_| AtomicU32::new(0))
+                .collect::<Vec<_>>(),
+        );
+        let heuristic_duplicated_counts = Arc::new(
+            (0..(n_keys * total_minimizers_atomic))
+                .map(|_| AtomicU32::new(0))
+                .collect::<Vec<_>>(),
+        );
+        let boundaries = Arc::new(Mutex::new(
+            (0..chunk_count)
+                .map(|_| None)
+                .collect::<Vec<Option<DenseChunkBoundary>>>(),
+        ));
 
-        let mut best_oracle = u128::MAX;
-        let mut best_key_idx = 0usize;
-        let mut best_vigemin_idx = 0usize;
-        let mut best_vigemin_code = 0u64;
+        let scan_start = Instant::now();
+        (0..chunk_count)
+            .into_par_iter()
+            .try_for_each(|chunk_idx| -> Result<(), String> {
+                let start_window = chunk_idx * chunk_windows;
+                let end_window = (start_window + chunk_windows).min(window_count);
+                let boundary = process_lazy_chunk_atomic(
+                    start_window,
+                    end_window,
+                    sequence,
+                    k,
+                    m,
+                    &key_packed_codes,
+                    oracle_dense,
+                    total_minimizers_atomic,
+                    key_partition_counts.as_ref(),
+                    heuristic_counts.as_ref(),
+                    heuristic_duplicated_counts.as_ref(),
+                );
 
-        for key_idx in 0..n_keys {
-            let (vigemin_idx, vigemin_code) =
-                find_vigemin_index_and_code(kmer, &key_codes[key_idx], m);
-            key_partition_counts[key_idx].increment(vigemin_code);
-            key_partition_positions[key_idx].insert(window_start + vigemin_idx);
+                let mut boundary_slots = boundaries
+                    .lock()
+                    .map_err(|_| "failed to lock lazy atomic boundaries".to_owned())?;
+                boundary_slots[chunk_idx] = Some(boundary);
+                Ok(())
+            })
+            .map_err(|e| format!("lazy atomic scan failed: {e}"))?;
+        let scan_elapsed = scan_start.elapsed();
 
-            let oracle_value = oracle_by_key[key_idx].get(vigemin_code, k);
-            if oracle_value < best_oracle {
-                best_oracle = oracle_value;
-                best_key_idx = key_idx;
-                best_vigemin_idx = vigemin_idx;
-                best_vigemin_code = vigemin_code;
+        let merge_start = Instant::now();
+        let boundary_slots = Arc::try_unwrap(boundaries)
+            .map_err(|_| "internal error: lazy atomic boundaries still shared".to_owned())?
+            .into_inner()
+            .map_err(|_| "failed to unwrap lazy atomic boundaries".to_owned())?;
+        let boundaries = boundary_slots
+            .iter()
+            .enumerate()
+            .map(|(idx, boundary)| {
+                boundary
+                    .as_ref()
+                    .ok_or_else(|| format!("internal error: missing lazy atomic chunk {idx}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut key_unique_totals = vec![0u64; n_keys];
+        let mut heuristic_unique_total = 0u64;
+        for boundary in &boundaries {
+            for (dst, src) in key_unique_totals
+                .iter_mut()
+                .zip(boundary.key_unique_counts.iter())
+            {
+                *dst += *src;
+            }
+            heuristic_unique_total += boundary.heuristic_unique_count;
+        }
+
+        let overlap = k - m;
+        if overlap > 0 {
+            for pair in boundaries.windows(2) {
+                let left = pair[0];
+                let right = pair[1];
+                for key_idx in 0..n_keys {
+                    key_unique_totals[key_idx] -= mask_intersection_popcount(
+                        &left.key_high_masks[key_idx],
+                        &right.key_low_masks[key_idx],
+                    );
+                }
+                heuristic_unique_total -= mask_intersection_popcount(
+                    &left.heuristic_high_mask,
+                    &right.heuristic_low_mask,
+                );
             }
         }
 
-        heuristic_counts.increment(best_vigemin_code);
-        heuristic_duplicated_counts[best_key_idx].increment(best_vigemin_code);
-        heuristic_positions.insert(window_start + best_vigemin_idx);
+        let key_partition_counts = key_partition_counts
+            .iter()
+            .map(|value| value.load(Ordering::Relaxed) as u64)
+            .collect::<Vec<_>>();
+        let heuristic_counts = heuristic_counts
+            .iter()
+            .map(|value| value.load(Ordering::Relaxed) as u64)
+            .collect::<Vec<_>>();
+        let heuristic_duplicated_counts = heuristic_duplicated_counts
+            .iter()
+            .map(|value| value.load(Ordering::Relaxed) as u64)
+            .collect::<Vec<_>>();
+        let merge_elapsed = merge_start.elapsed();
+
+        println!(
+            "scan_ms={} sec_per_key_kmer={:.9}",
+            scan_elapsed.as_millis(),
+            scan_elapsed.as_secs_f64() / (window_count as f64 * n_keys as f64)
+        );
+        println!("merge_ms={}", merge_elapsed.as_millis());
+
+        let random_density = 2.0f64 / ((k - m + 1) as f64);
+        let mut key_density_sum = 0.0f64;
+        for key_idx in 0..n_keys {
+            let start = key_idx * total_minimizers_atomic;
+            let end = start + total_minimizers_atomic;
+            let buckets = key_partition_counts[start..end]
+                .iter()
+                .filter(|&&value| value > 0)
+                .count();
+            let density = key_unique_totals[key_idx] as f64 / (window_count as f64);
+            key_density_sum += density;
+            println!(
+                "key={} buckets={} density={:.12}",
+                keys[key_idx], buckets, density
+            );
+        }
+        println!("Random minimizer density : {random_density}");
+        println!(
+            "Mean density for the keys : {}",
+            key_density_sum / (n_keys as f64)
+        );
+
+        let heuristic_bucket_count = heuristic_counts.iter().filter(|&&v| v > 0).count();
+        let mut heuristic_duplicated_bucket_count = 0usize;
+        for key_idx in 0..n_keys {
+            let start = key_idx * total_minimizers_atomic;
+            let end = start + total_minimizers_atomic;
+            heuristic_duplicated_bucket_count += heuristic_duplicated_counts[start..end]
+                .iter()
+                .filter(|&&value| value > 0)
+                .count();
+        }
+        let heuristic_density = heuristic_unique_total as f64 / (window_count as f64);
+
+        println!("Heuristic number of buckets: {heuristic_bucket_count}");
+        println!(
+            "Heuristic number of buckets (with duplication): {heuristic_duplicated_bucket_count}"
+        );
+        println!("Random minimizer density : {random_density}");
+        println!("Density of the heuristic (duplicated or not): {heuristic_density}");
+
+        let mut key_buckets = Vec::with_capacity(n_keys);
+        for key_idx in 0..n_keys {
+            let start = key_idx * total_minimizers_atomic;
+            let end = start + total_minimizers_atomic;
+            key_buckets.push(sorted_non_zero_slice(&key_partition_counts[start..end]));
+        }
+        let heuristic_buckets = sorted_non_zero_slice(&heuristic_counts);
+        let heuristic_duplicated_buckets = sorted_non_zero_slice(&heuristic_duplicated_counts);
+        let plot_path = output_dir.join(format!(
+            "pikmin_benchmark_k={k}_m={m}_N_keys={n_keys}_seq_size={sequence_len}.png"
+        ));
+        plot_pikmin_buckets(
+            &key_buckets,
+            &heuristic_buckets,
+            &heuristic_duplicated_buckets,
+            n_keys,
+            m,
+            k,
+            &plot_path,
+        )?;
+        eprintln!("wrote {}", plot_path.display());
+
+        println!(
+            "elapsed_total_ms={}",
+            sequence_elapsed.as_millis()
+                + oracle_elapsed.as_millis()
+                + scan_elapsed.as_millis()
+                + merge_elapsed.as_millis()
+        );
+        return Ok(());
     }
+
+    let merge_state = Arc::new(Mutex::new(LazyMergeState {
+        key_partition_counts: (0..n_keys).map(|_| MinimizerCounter::sparse()).collect(),
+        heuristic_counts: MinimizerCounter::sparse(),
+        heuristic_duplicated_counts: (0..n_keys).map(|_| MinimizerCounter::sparse()).collect(),
+        chunk_boundaries: (0..chunk_count).map(|_| None).collect(),
+    }));
+
+    let scan_start = Instant::now();
+    (0..chunk_count)
+        .into_par_iter()
+        .try_for_each(|chunk_idx| -> Result<(), String> {
+            let start_window = chunk_idx * chunk_windows;
+            let end_window = (start_window + chunk_windows).min(window_count);
+            let result = process_lazy_chunk_from_sequence(
+                chunk_idx,
+                start_window,
+                end_window,
+                sequence,
+                k,
+                m,
+                &keys,
+                &key_codes,
+                &key_packed_codes,
+            )?;
+
+            let mut state = merge_state
+                .lock()
+                .map_err(|_| "failed to lock lazy merge state".to_owned())?;
+
+            for (dst, src) in state
+                .key_partition_counts
+                .iter_mut()
+                .zip(result.key_partition_counts.into_iter())
+            {
+                dst.merge_from(src);
+            }
+            state.heuristic_counts.merge_from(result.heuristic_counts);
+            for (dst, src) in state
+                .heuristic_duplicated_counts
+                .iter_mut()
+                .zip(result.heuristic_duplicated_counts.into_iter())
+            {
+                dst.merge_from(src);
+            }
+            state.chunk_boundaries[result.idx] = Some(result.boundary);
+            Ok(())
+        })
+        .map_err(|e| format!("lazy scan failed: {e}"))?;
     let scan_elapsed = scan_start.elapsed();
+    let merge_start = Instant::now();
+
+    let state = Arc::try_unwrap(merge_state)
+        .map_err(|_| "internal error: lazy merge state still shared".to_owned())?
+        .into_inner()
+        .map_err(|_| "failed to unwrap lazy merge state".to_owned())?;
+
+    let boundaries = state
+        .chunk_boundaries
+        .iter()
+        .enumerate()
+        .map(|(idx, boundary)| {
+            boundary
+                .as_ref()
+                .ok_or_else(|| format!("internal error: missing lazy chunk result {idx}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut key_unique_totals = vec![0u64; n_keys];
+    let mut heuristic_unique_total = 0u64;
+    for boundary in &boundaries {
+        for (dst, src) in key_unique_totals
+            .iter_mut()
+            .zip(boundary.key_unique_counts.iter())
+        {
+            *dst += *src;
+        }
+        heuristic_unique_total += boundary.heuristic_unique_count;
+    }
+
+    let overlap = k - m;
+    if overlap > 0 {
+        for pair in boundaries.windows(2) {
+            let left = pair[0];
+            let right = pair[1];
+            for key_idx in 0..n_keys {
+                key_unique_totals[key_idx] -= mask_intersection_popcount(
+                    &left.key_high_masks[key_idx],
+                    &right.key_low_masks[key_idx],
+                );
+            }
+            heuristic_unique_total -=
+                mask_intersection_popcount(&left.heuristic_high_mask, &right.heuristic_low_mask);
+        }
+    }
+
+    let key_partition_counts = state.key_partition_counts;
+    let heuristic_counts = state.heuristic_counts;
+    let heuristic_duplicated_counts = state.heuristic_duplicated_counts;
+    let merge_elapsed = merge_start.elapsed();
 
     println!(
         "scan_ms={} sec_per_key_kmer={:.9}",
         scan_elapsed.as_millis(),
         scan_elapsed.as_secs_f64() / (window_count as f64 * n_keys as f64)
     );
+    println!("merge_ms={}", merge_elapsed.as_millis());
 
     let random_density = 2.0f64 / ((k - m + 1) as f64);
     let mut key_density_sum = 0.0f64;
     for key_idx in 0..n_keys {
-        let density = key_partition_positions[key_idx].len() as f64 / (window_count as f64);
+        let density = key_unique_totals[key_idx] as f64 / (window_count as f64);
         key_density_sum += density;
         println!(
             "key={} buckets={} density={:.12}",
@@ -1153,17 +1816,192 @@ pub fn run_benchmark(
         .iter()
         .map(MinimizerCounter::non_zero_count)
         .sum();
-    let heuristic_density = heuristic_positions.len() as f64 / (window_count as f64);
+    let heuristic_density = heuristic_unique_total as f64 / (window_count as f64);
 
     println!("Heuristic number of buckets: {heuristic_bucket_count}");
     println!("Heuristic number of buckets (with duplication): {heuristic_duplicated_bucket_count}");
     println!("Random minimizer density : {random_density}");
     println!("Density of the heuristic (duplicated or not): {heuristic_density}");
 
+    let key_buckets = key_partition_counts
+        .iter()
+        .map(MinimizerCounter::sorted_non_zero_values)
+        .collect::<Vec<_>>();
+    let heuristic_buckets = heuristic_counts.sorted_non_zero_values();
+    let mut heuristic_duplicated_buckets = Vec::new();
+    for counter in &heuristic_duplicated_counts {
+        heuristic_duplicated_buckets.extend(counter.sorted_non_zero_values());
+    }
+    heuristic_duplicated_buckets.sort_unstable_by(|a, b| b.cmp(a));
+    let plot_path = output_dir.join(format!(
+        "pikmin_benchmark_k={k}_m={m}_N_keys={n_keys}_seq_size={sequence_len}.png"
+    ));
+    plot_pikmin_buckets(
+        &key_buckets,
+        &heuristic_buckets,
+        &heuristic_duplicated_buckets,
+        n_keys,
+        m,
+        k,
+        &plot_path,
+    )?;
+    eprintln!("wrote {}", plot_path.display());
+
     println!(
         "elapsed_total_ms={}",
-        sequence_elapsed.as_millis() + oracle_elapsed.as_millis() + scan_elapsed.as_millis()
+        sequence_elapsed.as_millis()
+            + oracle_elapsed.as_millis()
+            + scan_elapsed.as_millis()
+            + merge_elapsed.as_millis()
     );
+    Ok(())
+}
+
+#[inline]
+fn sorted_non_zero_slice(values: &[u64]) -> Vec<u64> {
+    let mut out = values
+        .iter()
+        .copied()
+        .filter(|&value| value > 0)
+        .collect::<Vec<_>>();
+    out.sort_unstable_by(|a, b| b.cmp(a));
+    out
+}
+
+#[inline]
+fn log10_count(value: u64) -> f64 {
+    (value as f64).log10()
+}
+
+fn plot_pikmin_buckets(
+    key_buckets: &[Vec<u64>],
+    heuristic_buckets: &[u64],
+    heuristic_duplicated_buckets: &[u64],
+    n_keys: usize,
+    m: usize,
+    k: usize,
+    output_path: &Path,
+) -> Result<(), String> {
+    if key_buckets.is_empty() {
+        return Err("cannot plot benchmark with empty key series".to_owned());
+    }
+    if heuristic_buckets.is_empty() {
+        return Err("cannot plot benchmark with empty heuristic series".to_owned());
+    }
+    if heuristic_duplicated_buckets.is_empty() {
+        return Err("cannot plot benchmark with empty duplicated heuristic series".to_owned());
+    }
+
+    let max_len = key_buckets
+        .iter()
+        .map(Vec::len)
+        .chain(std::iter::once(heuristic_buckets.len()))
+        .chain(std::iter::once(heuristic_duplicated_buckets.len()))
+        .max()
+        .unwrap_or(0);
+    if max_len == 0 {
+        return Err("cannot plot benchmark with empty buckets".to_owned());
+    }
+
+    let max_value = key_buckets
+        .iter()
+        .flat_map(|series| series.iter().copied())
+        .chain(heuristic_buckets.iter().copied())
+        .chain(heuristic_duplicated_buckets.iter().copied())
+        .max()
+        .ok_or_else(|| "cannot plot benchmark with empty buckets".to_owned())?;
+
+    let y_max = (log10_count(max_value) + 0.25).max(0.25);
+    let x_end = max_len.saturating_sub(1) as i32;
+
+    let root = BitMapBackend::new(output_path, (1800, 1100)).into_drawing_area();
+    root.fill(&WHITE)
+        .map_err(|e| format!("failed to initialize benchmark plot background: {e}"))?;
+
+    let mut chart = ChartBuilder::on(&root)
+        .margin(20)
+        .caption(
+            format!("Pikmin benchmark bucket sizes (m={m}, k={k}, n_keys={n_keys})"),
+            ("sans-serif", 34),
+        )
+        .x_label_area_size(60)
+        .y_label_area_size(90)
+        .build_cartesian_2d(0..(x_end + 1), 0.0f64..y_max)
+        .map_err(|e| format!("failed to build benchmark plot: {e}"))?;
+
+    chart
+        .configure_mesh()
+        .x_desc("bucket rank (sorted)")
+        .y_desc("log10(bucket size)")
+        .x_labels(10)
+        .y_labels(10)
+        .draw()
+        .map_err(|e| format!("failed to draw benchmark mesh: {e}"))?;
+
+    let key_style = ShapeStyle::from(&BLUE.mix(0.30)).stroke_width(2);
+    let key_series = &key_buckets[0];
+    chart
+        .draw_series(LineSeries::new(
+            key_series
+                .iter()
+                .enumerate()
+                .map(|(x, &value)| (x as i32, log10_count(value))),
+            key_style,
+        ))
+        .map_err(|e| format!("failed to draw key series: {e}"))?
+        .label(format!("{n_keys} keys"))
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 25, y)], BLUE.mix(0.40)));
+
+    for series in &key_buckets[1..] {
+        chart
+            .draw_series(LineSeries::new(
+                series
+                    .iter()
+                    .enumerate()
+                    .map(|(x, &value)| (x as i32, log10_count(value))),
+                ShapeStyle::from(&BLUE.mix(0.30)).stroke_width(2),
+            ))
+            .map_err(|e| format!("failed to draw key series: {e}"))?;
+    }
+
+    chart
+        .draw_series(LineSeries::new(
+            heuristic_buckets
+                .iter()
+                .enumerate()
+                .map(|(x, &value)| (x as i32, log10_count(value))),
+            ShapeStyle::from(&RGBColor(230, 110, 30)).stroke_width(3),
+        ))
+        .map_err(|e| format!("failed to draw heuristic series: {e}"))?
+        .label("Heuristic")
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 25, y)], RGBColor(230, 110, 30)));
+
+    chart
+        .draw_series(LineSeries::new(
+            heuristic_duplicated_buckets
+                .iter()
+                .enumerate()
+                .map(|(x, &value)| (x as i32, log10_count(value))),
+            ShapeStyle::from(&RGBColor(30, 140, 70)).stroke_width(3),
+        ))
+        .map_err(|e| format!("failed to draw duplicated heuristic series: {e}"))?
+        .label("Heuristic (duplicated)")
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 25, y)], RGBColor(30, 140, 70)));
+
+    chart
+        .configure_series_labels()
+        .position(SeriesLabelPosition::UpperRight)
+        .background_style(WHITE.mix(0.8))
+        .border_style(BLACK)
+        .draw()
+        .map_err(|e| format!("failed to draw benchmark legend: {e}"))?;
+
+    root.present().map_err(|e| {
+        format!(
+            "failed to write benchmark plot {}: {e}",
+            output_path.display()
+        )
+    })?;
     Ok(())
 }
 
